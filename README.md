@@ -5,7 +5,7 @@ codepoint, no two of which look alike, and none of which you can see anyway. Sev
 these are one editor-setting away from being silently destroyed. 
 
 A program is a sequence of invisible codepoints, plus as much visible "cover text"
-as you like: **any character not defined below is ignored entirely.** This allows you to splice a `.txt` document with Invisible Ink, and that's the language's entire purpose.
+as you like: **any character not defined below is ignored entirely.** This allows you to splice a `.txt` document with Invisible Ink, and that's the language's entire purpose. Critically, `U+0020 SPACE` itself is *not* one of the spec codepoints, so ordinary prose (which is mostly made of spaces) is always safe cover text: a program can be laced anywhere in a document, including in the middle of a sentence, not just at paragraph breaks.
 
 Writing this language is genuinely awful, so I've made its own text editor.
 
@@ -35,7 +35,7 @@ dedicated loop construct.
 
 | Codepoint | Name | Op | Stack effect |
 |---|---|---|---|
-| U+0020 | SPACE | `dup` | `a -- a a` |
+| U+2062 | INVISIBLE TIMES | `dup` | `a -- a a` |
 | U+00A0 | NO-BREAK SPACE | `swap` | `a b -- b a` |
 | U+2007 | FIGURE SPACE | `drop` | `a --` |
 | U+2009 | THIN SPACE | `rot` | `a b c -- b c a` |
@@ -159,7 +159,7 @@ it anyway.
 
 | Codepoint | Name | Op |
 |---|---|---|
-| U+0020 | SPACE | `dup` |
+| U+2062 | INVISIBLE TIMES | `dup` |
 | U+00A0 | NO-BREAK SPACE | `swap` |
 | U+2007 | FIGURE SPACE | `drop` |
 | U+2009 | THIN SPACE | `rot` |

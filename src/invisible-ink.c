@@ -9,7 +9,7 @@
 typedef uint32_t cp_t;
 
 enum {
-    CP_SPACE   = 0x0020, /* dup */
+    CP_ITIMES  = 0x2062, /* dup -- INVISIBLE TIMES */
     CP_NBSP    = 0x00A0, /* swap */
     CP_FIGURE  = 0x2007, /* drop */
     CP_THIN    = 0x2009, /* rot */
@@ -34,7 +34,7 @@ enum {
 
 static bool is_spec_cp(cp_t c) {
     switch (c) {
-        case CP_SPACE: case CP_NBSP: case CP_FIGURE: case CP_THIN:
+        case CP_ITIMES: case CP_NBSP: case CP_FIGURE: case CP_THIN:
         case CP_HAIR: case CP_DIG0: case CP_DIG1:
         case CP_IDEO: case CP_PUNCT: case CP_MEDMATH:
         case CP_EN: case CP_EM: case CP_THREE:
@@ -229,7 +229,7 @@ static Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at
         }
 
         switch (ch) {
-            case CP_SPACE:  block_push(blk, OP_DUP);     i++; break;
+            case CP_ITIMES: block_push(blk, OP_DUP);     i++; break;
             case CP_NBSP:   block_push(blk, OP_SWAP);    i++; break;
             case CP_FIGURE: block_push(blk, OP_DROP);    i++; break;
             case CP_THIN:   block_push(blk, OP_ROT);     i++; break;

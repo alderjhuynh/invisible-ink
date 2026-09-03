@@ -35,7 +35,7 @@ typedef struct {
 } SpecEntry;
 
 static const SpecEntry SPEC_TABLE[] = {
-    { 0x0020, "sp", "SPACE",                    "dup",                  CAT_STACK   },
+    { 0x2062, "it", "INVISIBLE TIMES",           "dup",                  CAT_STACK   },
     { 0x00A0, "nb", "NO-BREAK SPACE",            "swap",                 CAT_STACK   },
     { 0x2007, "fg", "FIGURE SPACE",              "drop",                 CAT_STACK   },
     { 0x2009, "th", "THIN SPACE",                "rot",                  CAT_STACK   },
@@ -67,7 +67,7 @@ static const ConfusableRange CONFUSABLES[] = {
     { 0x2000, 0x2001, "EN/EM QUAD" },
     { 0x200E, 0x200F, "LRM/RLM DIRECTION MARK" },
     { 0x202F, 0x202F, "NARROW NO-BREAK SPACE" },
-    { 0x2062, 0x2064, "INVISIBLE MATH OPERATOR" },
+    { 0x2063, 0x2064, "INVISIBLE MATH OPERATOR" },
     { 0xFE00, 0xFE0F, "VARIATION SELECTOR" },
     { 0xFFF9, 0xFFFB, "INTERLINEAR ANNOTATION" },
 };
