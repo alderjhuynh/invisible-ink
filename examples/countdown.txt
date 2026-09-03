@@ -3,9 +3,7 @@ Countdown, from five.
 The interpreter ignores every character on this page except a handful
 of invisible ones threaded through it -- this whole paragraph, and the
 one below, are just cover text and never touch the stack.
-
 ﻿        ⁡  ⁠‌ 　        ⁡‍​
-
 If you're reading the raw bytes and wondering where the program
 went: it's the invisible codepoints sitting right after the marker
 above. Everything you can actually see, including this sentence, is
