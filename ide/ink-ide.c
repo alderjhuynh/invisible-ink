@@ -52,8 +52,8 @@ static const SpecEntry SPEC_TABLE[] = {
     { 0x200D, "zj", "ZERO WIDTH JOINER",         "block close",          CAT_BLOCK   },
     { 0x2060, "wj", "WORD JOINER",               "if / then / else",     CAT_BLOCK   },
     { 0x2061, "fa", "FUNCTION APPLICATION",      "call",                 CAT_BLOCK   },
-    { 0x2028, "ls", "LINE SEPARATOR",            "statement boundary",   CAT_STRUCT  },
-    { 0x2029, "ps", "PARAGRAPH SEPARATOR",       "word boundary",        CAT_STRUCT  },
+    { 0x2000, "ls", "EN QUAD",                   "statement boundary",   CAT_STRUCT  },
+    { 0x2001, "ps", "EM QUAD",                   "word boundary",        CAT_STRUCT  },
     { 0x200B, "zs", "ZERO WIDTH SPACE",          "program terminator",   CAT_STRUCT  },
     { 0xFEFF, "bo", "ZERO WIDTH NO-BREAK SPACE", "begin embedded pgm",   CAT_STRUCT  },
 };
@@ -61,10 +61,9 @@ static const SpecEntry SPEC_TABLE[] = {
 
 typedef struct { cp_t lo, hi; const char *name; } ConfusableRange;
 static const ConfusableRange CONFUSABLES[] = {
+    { 0x180E, 0x180E, "MONGOLIAN VOWEL SEPARATOR"},
     { 0x00AD, 0x00AD, "SOFT HYPHEN" },
     { 0x061C, 0x061C, "ARABIC LETTER MARK" },
-    { 0x180E, 0x180E, "MONGOLIAN VOWEL SEPARATOR" },
-    { 0x2000, 0x2001, "EN/EM QUAD" },
     { 0x200E, 0x200F, "LRM/RLM DIRECTION MARK" },
     { 0x202F, 0x202F, "NARROW NO-BREAK SPACE" },
     { 0x2063, 0x2064, "INVISIBLE MATH OPERATOR" },

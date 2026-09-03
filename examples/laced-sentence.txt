@@ -1,3 +1,0 @@
-This is  an  example of inline Invisible Ink.
-        　
-Unfortunately, Line Separators kinda break it. 

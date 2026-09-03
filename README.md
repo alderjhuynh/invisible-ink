@@ -14,13 +14,13 @@ Writing this language is genuinely awful, so I've made its own text editor.
 ## Program structure
 
 An Invisible Ink source consists of one or more **words**, separated by
-`U+2029 PARAGRAPH SEPARATOR`:
+`U+2001 EM QUAD`:
 
 - Everything before the first `¶` is **word 0**, the entry point, and runs
   automatically.
 - Each subsequent `¶`-delimited chunk is word 1, 2, 3, ... in definition order.
 - A word returns implicitly when it hits the next `¶` or the program terminator.
-- Within a word, `U+2028 LINE SEPARATOR` marks statement boundaries (and also
+- Within a word, `U+2000 EN QUAD` marks statement boundaries (and also
   closes literals).
 
 Recursion plus `if/then/else` is the language's only control-flow primitive;
@@ -57,7 +57,7 @@ EN SPACE at arity 1 (`negate`).
 ### Literals
 
 `U+200A HAIR SPACE` opens a literal. A run of binary-digit codepoints follows,
-most-significant bit first, and the literal closes at the next `LINE SEPARATOR`
+most-significant bit first, and the literal closes at the next `EN QUAD`
 (which also still ends the statement; no separate terminator needed):
 
 | Codepoint | Name | Meaning |
@@ -65,7 +65,7 @@ most-significant bit first, and the literal closes at the next `LINE SEPARATOR`
 | U+200A | HAIR SPACE | begin literal |
 | U+2005 | FOUR-PER-EM SPACE | binary digit `0` |
 | U+2006 | SIX-PER-EM SPACE | binary digit `1` |
-| U+2028 | LINE SEPARATOR | close literal / end statement |
+| U+2000 | EN QUAD | close literal / end statement |
 
 Example: pushing `5` (`101`): `HAIR-SPACE SIX-PER-EM FOUR-PER-EM SIX-PER-EM LINE-SEPARATOR`.
 
@@ -87,8 +87,8 @@ Numeric input isn't a dedicated op. Do `char-in` in a loop plus your own parsing
 | U+200D | ZERO WIDTH JOINER | block close |
 | U+2060 | WORD JOINER | `if` / `then` / `else` (see below) |
 | U+2061 | FUNCTION APPLICATION | `call` - pop `n`, run word `n`, return here when it finishes |
-| U+2028 | LINE SEPARATOR | statement boundary |
-| U+2029 | PARAGRAPH SEPARATOR | word definition boundary |
+| U+2000 | EN QUAD | statement boundary |
+| U+2001 | EM QUAD | word definition boundary |
 | U+200B | ZERO WIDTH SPACE | program terminator |
 | U+FEFF | ZERO WIDTH NO-BREAK SPACE | begin embedded program (see *Embedding*) |
 
@@ -176,7 +176,7 @@ it anyway.
 | U+200D | ZERO WIDTH JOINER | block close |
 | U+2060 | WORD JOINER | if / then / else |
 | U+2061 | FUNCTION APPLICATION | call word `n` |
-| U+2028 | LINE SEPARATOR | statement boundary / literal terminator |
-| U+2029 | PARAGRAPH SEPARATOR | word definition boundary |
+| U+2000 | EN QUAD | statement boundary / literal terminator |
+| U+2001 | EM QUAD | word definition boundary |
 | U+200B | ZERO WIDTH SPACE | program terminator |
 | U+FEFF | ZERO WIDTH NO-BREAK SPACE | begin embedded program |

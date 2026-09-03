@@ -26,8 +26,8 @@ enum {
     CP_ZWJ     = 0x200D, /* block close */
     CP_WJ      = 0x2060, /* if */
     CP_FA      = 0x2061, /* call */
-    CP_LS      = 0x2028, /* statement boundary / literal terminator */
-    CP_PS      = 0x2029, /* word boundary */
+    CP_LS      = 0x2000, /* statement boundary / literal terminator */
+    CP_PS      = 0x2001, /* word boundary */
     CP_ZWSP    = 0x200B, /* terminator */
     CP_BOM     = 0xFEFF  /* begin embedded program */
 };
