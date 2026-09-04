@@ -315,6 +315,32 @@ static bool save_file_to(const char *path) {
     return ok;
 }
 
+static bool save_raw_file_to(const char *path) {
+    ByteBuf bb = {0};
+    for (size_t i = 0; i < E.numlines; i++) {
+        Line *ln = &E.lines[i];
+        for (size_t k = 0; k < ln->len; k++) {
+            const SpecEntry *s = spec_by_cp(ln->chars[k]);
+            if (s) {
+                bb_put_byte(&bb, (unsigned char)s->label[0]);
+                bb_put_byte(&bb, (unsigned char)s->label[1]);
+            } else {
+                utf8_encode_append(&bb, ln->chars[k]);
+            }
+        }
+        if (i + 1 < E.numlines) bb_put_byte(&bb, 0x0A);
+    }
+    if (E.numlines > 0 && E.had_trailing_newline) bb_put_byte(&bb, 0x0A);
+
+    FILE *f = fopen(path, "wb");
+    if (!f) { free(bb.data); return false; }
+    size_t written = fwrite(bb.data, 1, bb.len, f);
+    fclose(f);
+    bool ok = (written == bb.len);
+    free(bb.data);
+    return ok;
+}
+
 typedef struct {
     bool is_token;
     int width;
@@ -428,6 +454,7 @@ enum {
     KEY_CTRL_Q,
     KEY_CTRL_K,
     KEY_CTRL_G,
+    KEY_CTRL_R,
     KEY_NONE,
 };
 
@@ -514,6 +541,7 @@ static int read_key(void) {
     if (b0 == 0x11) return KEY_CTRL_Q;
     if (b0 == 0x0B) return KEY_CTRL_K;
     if (b0 == 0x07) return KEY_CTRL_G;
+    if (b0 == 0x12) return KEY_CTRL_R;
     if (b0 == 0x03) return KEY_ESC;
     if (b0 < 0x80) return b0;
     return decode_utf8_continuation(b0);
@@ -639,25 +667,90 @@ static const char *cat_sgr_on(Category cat) {
 }
 #define SGR_OFF "\x1b[0m"
 
+static int line_wrapped_rows(const Line *ln, int avail) {
+    if (avail < 1) avail = 1;
+    if (ln->len == 0) return 1;
+    int rows = 1;
+    int col = 0;
+    for (size_t i = 0; i < ln->len; i++) {
+        RenderInfo r = classify_cp(ln->chars[i]);
+        int w = r.width;
+        if (col + w > avail) {
+            rows++;
+            col = 0;
+        }
+        col += w;
+    }
+    return rows;
+}
+
+static void cursor_wrapped_pos(const Line *ln, size_t cx, int avail, int *out_row, int *out_col) {
+    if (avail < 1) avail = 1;
+    int row = 0, col = 0;
+    for (size_t i = 0; i < cx && i < ln->len; i++) {
+        RenderInfo r = classify_cp(ln->chars[i]);
+        int w = r.width;
+        if (col + w > avail) {
+            row++;
+            col = 0;
+        }
+        col += w;
+    }
+    // if cursor is at end and the last token exactly fills the row, it should wrap to next row
+    // the loop above already handles col == avail meaning next char would wrap, but cursor itself
+    // at that column should be at start of next row only if the previous line was full.
+    // The above logic leaves col == avail as valid; we clamp: if col >= avail, wrap
+    if (col >= avail && cx < ln->len) {
+        // only wrap if next token would not fit, but cursor at cx means we are between chars
+        // if col == avail, the cursor is at column avail which is past the visible area,
+        // so it belongs to next row
+        // However our row/col already represents the position before the next char,
+        // and if col == avail, that means previous char filled the row exactly.
+        // Cursor should be at beginning of next row.
+        // Check if we are not already at a wrap boundary
+        // The loop for cx already included the last char; if col == avail, we have filled a row.
+        // Move to next row.
+        if (col == avail) {
+            // This case already implies the last char ended exactly at avail.
+            // The cursor after it should be at next row start, unless we keep it at end of row.
+            // We choose to keep it visible at end of row rather than next row to avoid jumping.
+            // So do nothing: keep row, col==avail (will be clamped by scroll)
+            // But rendering needs to handle it: we treat col==avail as next row
+            row++;
+            col = 0;
+            // Re-adjust: only if cx == ln->len and the line was exactly filled, showing cursor at next row
+            // is more honest. Keep it.
+        }
+    }
+    if (out_row) *out_row = row;
+    if (out_col) *out_col = col;
+}
+
+static int global_wrapped_row(const Line *lines, size_t cy, size_t cx, int avail) {
+    int global = 0;
+    for (size_t i = 0; i < cy; i++) global += line_wrapped_rows(&lines[i], avail);
+    int sub = 0;
+    cursor_wrapped_pos(&lines[cy], cx, avail, &sub, NULL);
+    return global + sub;
+}
+
 static void render_line(AppendBuf *ab, const Line *ln, int coloff, int avail,
                          long want_cx, int *cursor_col_out) {
+    (void)coloff;
     int col = 0;
     int emitted = 0;
     if (cursor_col_out) *cursor_col_out = -1;
-
+    // For backwards compatibility the old render_line now delegates to wrapped logic
+    // with target_row = 0. Callers that need wrapping should use render_wrapped_row.
+    // Here we simply render the first wrapped row (used only by legacy paths if any).
     for (size_t i = 0; i <= ln->len; i++) {
         if ((long)i == want_cx && cursor_col_out)
-            *cursor_col_out = col - coloff;
-
+            *cursor_col_out = col;
         if (i == ln->len) break;
-
         RenderInfo r = classify_cp(ln->chars[i]);
         int w = r.width;
-
-        if (col + w <= coloff) { col += w; continue; }
-        if (col >= coloff + avail) break;
+        if (col + w > avail) break;
         if (emitted + w > avail) break;
-
         if (r.is_token) {
             ab_str(ab, cat_sgr_on(r.cat));
             ab_append(ab, r.label, 2);
@@ -673,6 +766,49 @@ static void render_line(AppendBuf *ab, const Line *ln, int coloff, int avail,
     }
 }
 
+static void render_wrapped_row(AppendBuf *ab, const Line *ln, int avail, int target_row,
+                               long want_cx, int *cursor_col_out) {
+    if (cursor_col_out) *cursor_col_out = -1;
+    int cur_row = 0, cur_col = 0;
+    for (size_t i = 0; i <= ln->len; i++) {
+        if ((long)i == want_cx && cursor_col_out) {
+            if (cur_row == target_row) *cursor_col_out = cur_col;
+            else if ((long)i == (long)ln->len && cur_row == target_row) *cursor_col_out = cur_col;
+        }
+        if (i == ln->len) break;
+        RenderInfo r = classify_cp(ln->chars[i]);
+        int w = r.width;
+        if (cur_col + w > avail) {
+            cur_row++;
+            cur_col = 0;
+            if (cur_row > target_row) break;
+        }
+        if (cur_row < target_row) {
+            cur_col += w;
+            continue;
+        }
+        if (cur_row > target_row) break;
+        // cur_row == target_row
+        if (r.is_token) {
+            ab_str(ab, cat_sgr_on(r.cat));
+            ab_append(ab, r.label, 2);
+            ab_str(ab, SGR_OFF);
+        } else {
+            ByteBuf tmp = {0};
+            utf8_encode_append(&tmp, ln->chars[i]);
+            ab_append(ab, (char *)tmp.data, tmp.len);
+            free(tmp.data);
+        }
+        cur_col += w;
+    }
+    // cursor at end of line that exactly filled a row: handle
+    if (want_cx >= 0 && (size_t)want_cx == ln->len && cursor_col_out && *cursor_col_out == -1) {
+        int r, c;
+        cursor_wrapped_pos(ln, (size_t)want_cx, avail, &r, &c);
+        if (r == target_row) *cursor_col_out = c;
+    }
+}
+
 static int column_for_cx(const Line *ln, size_t cx) {
     int col = 0;
     for (size_t i = 0; i < cx && i < ln->len; i++) {
@@ -683,15 +819,12 @@ static int column_for_cx(const Line *ln, size_t cx) {
 }
 
 static void editor_scroll(void) {
-    if (E.cy < E.rowoff) E.rowoff = E.cy;
-    if (E.cy >= E.rowoff + (size_t)E.textrows) E.rowoff = E.cy - (size_t)E.textrows + 1;
-
     int avail = E.screencols - E.gutter_w;
     if (avail < 1) avail = 1;
-    int curcol = column_for_cx(&E.lines[E.cy], E.cx);
-    if (curcol < E.coloff) E.coloff = curcol;
-    if (curcol >= E.coloff + avail) E.coloff = curcol - avail + 1;
-    if (E.coloff < 0) E.coloff = 0;
+    E.coloff = 0; // horizontal scroll disabled - we wrap instead
+    int cur_global = global_wrapped_row(E.lines, E.cy, E.cx, avail);
+    if (cur_global < (int)E.rowoff) E.rowoff = (size_t)cur_global;
+    if (cur_global >= (int)(E.rowoff + (size_t)E.textrows)) E.rowoff = (size_t)(cur_global - E.textrows + 1);
 }
 
 static const char *cp_info_string(cp_t cp, char *buf, size_t bufsz) {
@@ -770,27 +903,57 @@ static void refresh_screen(void) {
         return;
     }
 
+    int avail = E.screencols - E.gutter_w;
+    if (avail < 1) avail = 1;
+
+    // wrapped cursor position
+    int cur_sub_row = 0, cur_sub_col = 0;
+    int cur_global = global_wrapped_row(E.lines, E.cy, E.cx, avail);
+    cursor_wrapped_pos(&E.lines[E.cy], E.cx, avail, &cur_sub_row, &cur_sub_col);
+    (void)cur_sub_row;
+
     int cursor_row = -1, cursor_col = -1;
     for (int y = 0; y < E.textrows; y++) {
-        size_t filerow = E.rowoff + (size_t)y;
+        int target_global = (int)E.rowoff + y;
+        // find logical line and sub-row for this global row
+        int cur = 0;
+        size_t filerow = (size_t)-1;
+        int subrow = -1;
+        for (size_t i = 0; i < E.numlines; i++) {
+            int h = line_wrapped_rows(&E.lines[i], avail);
+            if (target_global >= cur && target_global < cur + h) {
+                filerow = i;
+                subrow = target_global - cur;
+                break;
+            }
+            cur += h;
+        }
         ab_str(&ab, "\x1b[K");
-        if (filerow < E.numlines) {
+        if (filerow != (size_t)-1) {
             char gutter[32];
-            snprintf(gutter, sizeof(gutter), "\x1b[2;90m%*zu \x1b[0m", E.gutter_w - 1, filerow + 1);
+            if (subrow == 0) {
+                snprintf(gutter, sizeof(gutter), "\x1b[2;90m%*zu \x1b[0m", E.gutter_w - 1, filerow + 1);
+            } else {
+                // continuation line: show blank gutter with a dim marker
+                snprintf(gutter, sizeof(gutter), "\x1b[2;90m%*s \x1b[0m", E.gutter_w - 1, "");
+            }
             ab_str(&ab, gutter);
-            int avail = E.screencols - E.gutter_w;
-            if (avail < 1) avail = 1;
             int cc = -1;
             long want = (filerow == E.cy) ? (long)E.cx : -1;
-            render_line(&ab, &E.lines[filerow], E.coloff, avail, want, &cc);
-            if (filerow == E.cy) {
+            render_wrapped_row(&ab, &E.lines[filerow], avail, subrow, want, &cc);
+            if (filerow == E.cy && subrow == cur_sub_row) {
                 cursor_row = y;
-                cursor_col = E.gutter_w + (cc < 0 ? 0 : cc);
+                cursor_col = E.gutter_w + (cc < 0 ? cur_sub_col : cc);
             }
         } else {
             ab_str(&ab, "\x1b[2;90m~\x1b[0m");
         }
         ab_str(&ab, "\r\n");
+    }
+    // if cursor is at a position that would be beyond the last rendered row due to exact fill, ensure it stays visible
+    if (cursor_row == -1 && cur_global >= (int)E.rowoff && cur_global < (int)E.rowoff + E.textrows) {
+        cursor_row = cur_global - (int)E.rowoff;
+        cursor_col = E.gutter_w + cur_sub_col;
     }
 
     {
@@ -831,7 +994,7 @@ static void refresh_screen(void) {
         ab_str(&ab, "at cursor: ");
         ab_str(&ab, info);
     } else {
-        ab_str(&ab, "Ctrl-S save  Ctrl-Q quit  Ctrl-K insert glyph  Ctrl-G legend");
+        ab_str(&ab, "Ctrl-S save  Ctrl-R raw  Ctrl-Q quit  Ctrl-K glyph  Ctrl-G legend");
     }
 
     if (cursor_row >= 0) {
@@ -893,6 +1056,17 @@ static void do_save(void) {
     }
 }
 
+static void do_save_raw(void) {
+    char *name = prompt_line("Save raw as: ");
+    if (!name) { set_status("Save raw cancelled"); return; }
+    if (save_raw_file_to(name)) {
+        set_status("Saved raw \"%s\"", name);
+    } else {
+        set_status("Could not save raw: %s", strerror(errno));
+    }
+    free(name);
+}
+
 static void handle_digraph_char(int k) {
     if (k == KEY_ESC || k >= 0x110000) {
         E.pending_digraph = 0;
@@ -938,6 +1112,10 @@ static void process_keypress(void) {
 
         case KEY_CTRL_S:
             do_save();
+            break;
+
+        case KEY_CTRL_R:
+            do_save_raw();
             break;
 
         case KEY_CTRL_K:
@@ -1092,6 +1270,52 @@ static void run_selftest(void) {
         remove("/tmp/ink-edit-selftest-out.txt");
     }
 
+    {
+        // raw save: spec cps become 2-letter mnemonics, normal text stays
+        memset(&E, 0, sizeof(E));
+        // build buffer: "hi " + NBSP(swap/nb) + FA(call/fa) + newline + HAIR(ha)+D0(d0)+D1(d1)+LS(ls)
+        cp_t raw_cps[] = { 'h','i',' ', 0x00A0, 0x2061, 0x200A, 0x2005, 0x2006, 0x2000 };
+        // single line: first 9 cps plus newline handling; we fake lines directly
+        lines_insert_blank(0);
+        for (size_t i = 0; i < 9; i++) line_insert_cp(&E.lines[0], E.lines[0].len, raw_cps[i]);
+        E.had_trailing_newline = false;
+        bool ok = save_raw_file_to("/tmp/ink-edit-selftest-raw.txt");
+        CHECK(ok, "raw save writes file");
+        FILE *fr = fopen("/tmp/ink-edit-selftest-raw.txt", "rb");
+        fseek(fr, 0, SEEK_END);
+        long szr = ftell(fr);
+        fseek(fr, 0, SEEK_SET);
+        unsigned char *rout = malloc((size_t)szr + 1);
+        size_t _rr = fread(rout, 1, (size_t)szr, fr); (void)_rr;
+        rout[szr] = 0;
+        fclose(fr);
+        const char *expected = "hi nbfahad0d1ls";
+        bool raw_ok = (szr == (long)strlen(expected) && memcmp(rout, expected, (size_t)szr) == 0);
+        if (!raw_ok) {
+            fprintf(stderr, "  expected raw: \"%s\" (%zu bytes)\n", expected, strlen(expected));
+            fprintf(stderr, "  got raw:      \"%.*s\" (%ld bytes)\n", (int)szr, rout, szr);
+        }
+        CHECK(raw_ok, "raw save translates spec codepoints to 2-letter mnemonics");
+        free(rout);
+        for (size_t i = 0; i < E.numlines; i++) free(E.lines[i].chars);
+        free(E.lines);
+        remove("/tmp/ink-edit-selftest-raw.txt");
+        memset(&E, 0, sizeof(E));
+    }
+
+    {
+        // wrapping sanity: a line with many 2-width tokens should wrap
+        int avail = 10;
+        Line ln = {0};
+        for (int i = 0; i < 6; i++) line_insert_cp(&ln, ln.len, 0x00A0); // each width 2
+        int rows = line_wrapped_rows(&ln, avail);
+        CHECK(rows == 2, "wrapping: 6*width2 in avail 10 needs 2 rows");
+        int r,c;
+        cursor_wrapped_pos(&ln, 5, avail, &r, &c);
+        CHECK(r == 1 && c == 0, "wrapping: cursor after 5 tokens wraps to row 1 col 0");
+        free(ln.chars);
+    }
+
     fprintf(stderr, "\n%s\n", selftest_failures == 0 ? "all checks passed" : "SOME CHECKS FAILED");
 }
 
@@ -1122,7 +1346,7 @@ int main(int argc, char **argv) {
 
     enable_raw_mode();
     get_window_size();
-    set_status("Ctrl-S save  Ctrl-Q quit  Ctrl-K insert glyph  Ctrl-G legend");
+    set_status("Ctrl-S save  Ctrl-R raw  Ctrl-Q quit  Ctrl-K glyph  Ctrl-G legend");
 
     while (true) {
         refresh_screen();

@@ -7,7 +7,7 @@ these are one editor-setting away from being silently destroyed.
 A program is a sequence of invisible codepoints, plus as much visible "cover text"
 as you like: **any character not defined below is ignored entirely.** This allows you to splice a `.txt` document with Invisible Ink, and that's the language's entire purpose. Critically, `U+0020 SPACE` itself is *not* one of the spec codepoints, so ordinary prose (which is mostly made of spaces) is always safe cover text: a program can be laced anywhere in a document, including in the middle of a sentence, not just at paragraph breaks.
 
-Writing this language is genuinely awful, so I've made its own text editor.
+Writing this language is genuinely awful, so I've made its own text editor. Just to let you get a sense of how painful this language is to write, I've added the raw inputs I wrote in the IDE for the blackjack example, you can view the raw here: [view the blackjack raw](blackjack-raw.md)
 
 ---
 
