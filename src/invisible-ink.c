@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <setjmp.h>
 #include <errno.h>
+#include <time.h>
+#include <unistd.h>
 
 typedef uint32_t cp_t;
 
@@ -29,7 +31,12 @@ enum {
     CP_LS      = 0x2000, /* statement boundary / literal terminator */
     CP_PS      = 0x2001, /* word boundary */
     CP_ZWSP    = 0x200B, /* terminator */
-    CP_BOM     = 0xFEFF  /* begin embedded program */
+    CP_BOM     = 0xFEFF, /* begin embedded program */
+    CP_INV_SEP = 0x2063, /* rand */
+    CP_INV_PLUS= 0x2064, /* store */
+    CP_LRM     = 0x200E, /* load */
+    CP_RLM     = 0x200F, /* sleep */
+    CP_SOFT    = 0x00AD  /* soft hyphen: alternate literal terminator (close+char-out) */
 };
 
 static bool is_spec_cp(cp_t c) {
@@ -40,6 +47,7 @@ static bool is_spec_cp(cp_t c) {
         case CP_EN: case CP_EM: case CP_THREE:
         case CP_ZWNJ: case CP_ZWJ: case CP_WJ: case CP_FA:
         case CP_LS: case CP_PS: case CP_ZWSP: case CP_BOM:
+        case CP_INV_SEP: case CP_INV_PLUS: case CP_LRM: case CP_RLM: case CP_SOFT:
             return true;
         default:
             return false;
@@ -121,7 +129,8 @@ typedef enum {
     OP_PUSH, OP_DUP, OP_SWAP, OP_DROP, OP_ROT,
     OP_NEG, OP_SUB, OP_MOD, OP_ID, OP_ADD, OP_DIV, OP_SIGN, OP_MUL, OP_POW,
     OP_NUMOUT, OP_CHAROUT, OP_CHARIN,
-    OP_CALL, OP_IF, OP_HALT
+    OP_CALL, OP_IF, OP_HALT,
+    OP_RAND, OP_STORE, OP_LOAD, OP_SLEEP
 } OpCode;
 
 typedef struct Block Block;
@@ -192,11 +201,15 @@ static Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at
                 i++;
             }
             if (nbits == 0) parse_error("empty literal", i);
-            if (i >= len || cps[i] != CP_LS)
-                parse_error("unterminated literal (expected LINE SEPARATOR)", i);
+            if (i >= len || (cps[i] != CP_LS && cps[i] != CP_SOFT))
+                parse_error("unterminated literal (expected LINE SEPARATOR or SOFT HYPHEN)", i);
+            bool soft = (cps[i] == CP_SOFT);
             i++;
             Instr *ins = block_push(blk, OP_PUSH);
             ins->value = bits;
+            if (soft) {
+                block_push(blk, OP_CHAROUT);
+            }
             continue;
         }
 
@@ -237,6 +250,11 @@ static Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at
             case CP_PUNCT:  block_push(blk, OP_CHAROUT); i++; break;
             case CP_MEDMATH:block_push(blk, OP_CHARIN);  i++; break;
             case CP_FA:     block_push(blk, OP_CALL);    i++; break;
+            case CP_INV_SEP:block_push(blk, OP_RAND);    i++; break;
+            case CP_INV_PLUS:block_push(blk, OP_STORE);  i++; break;
+            case CP_LRM:    block_push(blk, OP_LOAD);    i++; break;
+            case CP_RLM:    block_push(blk, OP_SLEEP);   i++; break;
+            case CP_SOFT:   /* ignored outside literal */ i++; break;
             case CP_ZWJ:    i++; break; 
             case CP_ZWNJ:   i++; break; 
             case CP_BOM:    i++; break; 
@@ -293,7 +311,7 @@ static Block **split_and_parse_words(const cp_t *cps, size_t len, size_t *out_wo
     return words;
 }
 
-#define MAX_STEPS 2000000UL
+#define MAX_STEPS 10000000UL
 #define MAX_DEPTH 20000
 
 static Block **g_words;
@@ -301,6 +319,12 @@ static size_t g_word_count;
 
 static int64_t *g_stack;
 static size_t g_sp, g_cap;
+
+static int64_t *g_mem;
+static size_t g_mem_cap;
+
+static uint64_t g_prng_state;
+static bool g_prng_seeded = false;
 
 static unsigned long g_steps;
 
@@ -326,6 +350,72 @@ static void push(int64_t v) {
 static int64_t pop(void) {
     if (g_sp == 0) vm_error("stack underflow");
     return g_stack[--g_sp];
+}
+
+static void mem_ensure(size_t addr) {
+    if (addr < g_mem_cap) return;
+    size_t new_cap = g_mem_cap ? g_mem_cap * 2 : 64;
+    while (new_cap <= addr) new_cap *= 2;
+    g_mem = realloc(g_mem, new_cap * sizeof(int64_t));
+    if (!g_mem) { perror("realloc"); exit(1); }
+    for (size_t i = g_mem_cap; i < new_cap; i++) g_mem[i] = 0;
+    g_mem_cap = new_cap;
+}
+
+static int64_t mem_load(int64_t addr) {
+    if (addr < 0) vm_error("invalid memory address");
+    if ((size_t)addr >= g_mem_cap) return 0;
+    return g_mem[(size_t)addr];
+}
+
+static void mem_store(int64_t addr, int64_t value) {
+    if (addr < 0) vm_error("invalid memory address");
+    mem_ensure((size_t)addr);
+    g_mem[(size_t)addr] = value;
+}
+
+static void prng_seed(void) {
+    if (g_prng_seeded) return;
+    uint64_t seed = 0;
+    bool got = false;
+    FILE *f = fopen("/dev/urandom", "rb");
+    if (f) {
+        uint64_t tmp = 0;
+        if (fread(&tmp, 1, sizeof(tmp), f) == sizeof(tmp)) {
+            seed = tmp;
+            got = true;
+        }
+        fclose(f);
+    }
+    if (!got) {
+        struct timespec ts;
+        if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
+            seed ^= (uint64_t)ts.tv_sec * 1000000007ULL ^ (uint64_t)ts.tv_nsec * 1009ULL;
+            got = true;
+        } else {
+            seed ^= (uint64_t)time(NULL) * 1000000007ULL;
+        }
+        seed ^= (uint64_t)getpid() * 0x9e3779b97f4a7c15ULL;
+        seed ^= (uint64_t)(uintptr_t)&seed;
+    }
+    if (seed == 0) seed = 0x9e3779b97f4a7c15ULL;
+    /* mix once to avoid zero-lock */
+    seed ^= seed >> 12;
+    seed ^= seed << 25;
+    seed ^= seed >> 27;
+    g_prng_state = seed;
+    g_prng_seeded = true;
+}
+
+static uint64_t prng_next(void) {
+    prng_seed();
+    /* xorshift64* */
+    uint64_t x = g_prng_state;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    g_prng_state = x;
+    return x * 0x2545F4914F6CDD1DULL;
 }
 
 static void exec_block(Block *blk, int depth);
@@ -356,9 +446,42 @@ static void exec_instr(Instr *ins, int depth) {
             push(r);
             break;
         }
-        case OP_NUMOUT: { int64_t a = pop(); printf("%lld\n", (long long)a); break; }
+        case OP_NUMOUT: { int64_t a = pop(); printf("%lld", (long long)a); break; }
         case OP_CHAROUT:{ int64_t a = pop(); utf8_put(a); break; }
-        case OP_CHARIN: push(utf8_get_stdin()); break;
+        case OP_CHARIN: fflush(stdout); push(utf8_get_stdin()); break;
+        case OP_RAND: {
+            int64_t n = pop();
+            if (n <= 0) vm_error("invalid random range");
+            uint64_t un = (uint64_t)n;
+            uint64_t r = prng_next();
+            /* unbiased via rejection */
+            uint64_t limit = UINT64_MAX - (UINT64_MAX % un);
+            while (r >= limit) r = prng_next();
+            push((int64_t)(r % un));
+            break;
+        }
+        case OP_STORE: {
+            int64_t value = pop();
+            int64_t addr = pop();
+            mem_store(addr, value);
+            break;
+        }
+        case OP_LOAD: {
+            int64_t addr = pop();
+            push(mem_load(addr));
+            break;
+        }
+        case OP_SLEEP: {
+            int64_t ms = pop();
+            if (ms > 0) {
+                fflush(stdout);
+                struct timespec ts;
+                ts.tv_sec = ms / 1000;
+                ts.tv_nsec = (ms % 1000) * 1000000L;
+                nanosleep(&ts, NULL);
+            }
+            break;
+        }
         case OP_CALL: {
             int64_t n = pop();
             if (depth > MAX_DEPTH) vm_error("call depth exceeded (possible infinite recursion)");
@@ -394,6 +517,7 @@ static const char *op_name(OpCode op) {
         case OP_SIGN: return "sign"; case OP_MUL: return "mul"; case OP_POW: return "pow";
         case OP_NUMOUT: return "num-out"; case OP_CHAROUT: return "char-out"; case OP_CHARIN: return "char-in";
         case OP_CALL: return "call"; case OP_IF: return "if"; case OP_HALT: return "halt";
+        case OP_RAND: return "rand"; case OP_STORE: return "store"; case OP_LOAD: return "load"; case OP_SLEEP: return "sleep";
     }
     return "?";
 }

@@ -56,17 +56,19 @@ static const SpecEntry SPEC_TABLE[] = {
     { 0x2001, "ps", "EM QUAD",                   "word boundary",        CAT_STRUCT  },
     { 0x200B, "zs", "ZERO WIDTH SPACE",          "program terminator",   CAT_STRUCT  },
     { 0xFEFF, "bo", "ZERO WIDTH NO-BREAK SPACE", "begin embedded pgm",   CAT_STRUCT  },
+    { 0x2063, "is", "INVISIBLE SEPARATOR",       "rand",                 CAT_IO      },
+    { 0x2064, "ip", "INVISIBLE PLUS",            "store",                CAT_STACK   },
+    { 0x200E, "lr", "LEFT-TO-RIGHT MARK",        "load",                 CAT_STACK   },
+    { 0x200F, "rl", "RIGHT-TO-LEFT MARK",        "sleep",                CAT_IO      },
+    { 0x00AD, "sh", "SOFT HYPHEN",               "lit+char-out",         CAT_LITERAL },
 };
 #define SPEC_COUNT (sizeof(SPEC_TABLE) / sizeof(SPEC_TABLE[0]))
 
 typedef struct { cp_t lo, hi; const char *name; } ConfusableRange;
 static const ConfusableRange CONFUSABLES[] = {
     { 0x180E, 0x180E, "MONGOLIAN VOWEL SEPARATOR"},
-    { 0x00AD, 0x00AD, "SOFT HYPHEN" },
     { 0x061C, 0x061C, "ARABIC LETTER MARK" },
-    { 0x200E, 0x200F, "LRM/RLM DIRECTION MARK" },
     { 0x202F, 0x202F, "NARROW NO-BREAK SPACE" },
-    { 0x2063, 0x2064, "INVISIBLE MATH OPERATOR" },
     { 0xFE00, 0xFE0F, "VARIATION SELECTOR" },
     { 0xFFF9, 0xFFFB, "INTERLINEAR ANNOTATION" },
 };
@@ -990,7 +992,7 @@ static int selftest_failures = 0;
 } while (0)
 
 static void run_selftest(void) {
-    CHECK(SPEC_COUNT == 21, "spec table has all 21 codepoints");
+    CHECK(SPEC_COUNT == 26, "spec table has all 26 codepoints");
     bool all_roundtrip = true;
     for (size_t i = 0; i < SPEC_COUNT; i++) {
         const SpecEntry *s = &SPEC_TABLE[i];
@@ -1019,7 +1021,7 @@ static void run_selftest(void) {
     CHECK(!rnorm.is_token && rnorm.width == 1, "plain ASCII renders as itself");
 
     RenderInfo rsoft = classify_cp(0x00AD); /* SOFT HYPHEN */
-    CHECK(rsoft.is_token && rsoft.cat == CAT_SUSPECT, "known confusable is flagged, not silent");
+    CHECK(rsoft.is_token && rsoft.cat == CAT_LITERAL, "soft hyphen is a spec literal terminator, not confusable");
 
     cp_t sample[] = { 'h', 'i', ' ', 0x00A0, 0x2029, 0x1F600, 0x3000 };
     ByteBuf bb = {0};
