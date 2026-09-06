@@ -57,7 +57,7 @@ EN SPACE at arity 1 (`negate`).
 ### Literals
 
 `U+200A HAIR SPACE` opens a literal. A run of binary-digit codepoints follows,
-most-significant bit first, and the literal closes at the next `EN QUAD`
+most-significant bit first, and the literal closes at the next terminator
 (which also still ends the statement; no separate terminator needed):
 
 | Codepoint | Name | Meaning |
@@ -66,18 +66,70 @@ most-significant bit first, and the literal closes at the next `EN QUAD`
 | U+2005 | FOUR-PER-EM SPACE | binary digit `0` |
 | U+2006 | SIX-PER-EM SPACE | binary digit `1` |
 | U+2000 | EN QUAD | close literal / end statement |
+| U+00AD | SOFT HYPHEN | close literal + `char-out` |
 
-Example: pushing `5` (`101`): `HAIR-SPACE SIX-PER-EM FOUR-PER-EM SIX-PER-EM LINE-SEPARATOR`.
+A literal must contain at least one binary digit, and must be terminated by
+either `EN QUAD` or `SOFT HYPHEN`. `SOFT HYPHEN` is a fused shorthand:
+`HAIR SPACE <bits> SOFT HYPHEN` is exactly equivalent to
+`HAIR SPACE <bits> EN QUAD` + `PUNCTUATION SPACE` (`char-out`). it pushes the
+value and immediately prints it as a Unicode codepoint. Outside a literal,
+a stray `SOFT HYPHEN` is ignored (like any non-spec cover text would be, but
+explicitly consumed so it never leaks into parsing).
+
+Example: pushing `5` (`101`): `HAIR-SPACE SIX-PER-EM FOUR-PER-EM SIX-PER-EM EN-QUAD`.
+
+To print `A` (65 = `1000001`) without a separate `char-out` op:
+`HAIR-SPACE SIX-PER-EM FOUR-PER-EM ×5 SIX-PER-EM SOFT-HYPHEN`.
 
 ### I/O
 
-| Codepoint | Name | Op |
-|---|---|---|
-| U+3000 | IDEOGRAPHIC SPACE | `num-out` - pop, print as a number, newline |
-| U+2008 | PUNCTUATION SPACE | `char-out` - pop, print as a Unicode codepoint (no newline) |
-| U+205F | MEDIUM MATHEMATICAL SPACE | `char-in` - read one codepoint, push its code point; pushes `-1` on EOF |
+| Codepoint | Name | Op | Stack effect |
+|---|---|---|---|
+| U+3000 | IDEOGRAPHIC SPACE | `num-out` | `a --` (pop, print as decimal, **no** newline) |
+| U+2008 | PUNCTUATION SPACE | `char-out` | `a --` (pop, print as Unicode codepoint, no newline) |
+| U+205F | MEDIUM MATHEMATICAL SPACE | `char-in` | `-- a` (read one codepoint, push its code point; pushes `-1` on EOF) |
 
 Numeric input isn't a dedicated op. Do `char-in` in a loop plus your own parsing.
+
+`char-in` flushes stdout before blocking, so prompts printed with `char-out`/`num-out` are visible before input is requested. `num-out` no longer appends a newline (earlier builds did). Emit `10` via `char-out` explicitly if you want a line break.
+
+### Memory (random-access store)
+
+Sparse, unbounded word-addressed memory, zero-initialised. Addresses are signed 64-bit integers; negative addresses halt. Reading an address that has never been written returns `0`. Memory grows on demand.
+
+| Codepoint | Name | Op | Stack effect |
+|---|---|---|---|
+| U+2064 | INVISIBLE PLUS | `store` | `addr value --` (pop `value`, pop `addr`, `mem[addr] = value`) |
+| U+200E | LEFT-TO-RIGHT MARK | `load` | `addr -- value` (push `mem[addr]`) |
+
+Mnemonic order for `store` is address on the bottom, value on top, so a typical sequence is `push addr; push value; store`. Both ops halt on negative address (and `store` will grow the backing store as needed).
+
+To bump a counter at address `0`:
+
+```
+push 0; push 0; store   // mem[0] = 0
+push 0; load            // push mem[0]
+push 1; add             // inc
+push 0; swap; store     // mem[0] = mem[0]+1  (re-arrange to addr/value order)
+```
+
+### Random
+
+| Codepoint | Name | Op | Stack effect |
+|---|---|---|---|
+| U+2063 | INVISIBLE SEPARATOR | `rand` | `n -- r` where `0 <= r < n`, uniform, unbiased via rejection sampling |
+
+Pops `n`, pushes a uniform random integer in `[0, n)`. Halts if `n <= 0`. Seeded on first use from `/dev/urandom` when available, otherwise `clock_gettime(CLOCK_MONOTONIC)` mixed with `getpid()` and stack address (xorshift64*). Used by `blackjack.txt` for shuffling/dealing.
+
+Example: roll a d6 (1–6): `push 6; rand; push 1; add`.
+
+### Timing
+
+| Codepoint | Name | Op | Stack effect |
+|---|---|---|---|
+| U+200F | RIGHT-TO-LEFT MARK | `sleep` | `ms --` (pop milliseconds, sleep that long) |
+
+Pops `ms` and sleeps for `ms` milliseconds via `nanosleep`. No-op if `ms <= 0`. Flushes stdout before sleeping, so prior output is visible during the pause. Useful for animations, pacing card reveals in `blackjack.txt`, etc.
 
 ### Control flow
 
@@ -113,9 +165,29 @@ and it already is.
 
 ## Errors
 
-**Halt-on-error**, matching original Whitespace: stack underflow,
-divide-by-zero, or a malformed literal all halt the program immediately.
-`char-in` at EOF is *not* an error.
+**Halt-on-error**, matching original Whitespace. Any of the following halts the program immediately with a runtime error (exit 1, message on stderr):
+
+- stack underflow (`dup`/`swap`/`drop`/`rot`/arity ops/`call`/`if`/`num-out`/`char-out`/`rand`/`store`/`load`/`sleep` needing a value that isn't there)
+- divide-by-zero or modulo-by-zero
+- malformed literal (empty, or unterminated; not closed by `EN QUAD` or `SOFT HYPHEN`)
+- `rand` with `n <= 0`
+- `store`/`load` with negative address
+- `call` to undefined word (index `< 0` or `>= word count`)
+- call depth exceeded (recursion > 20,000)
+- step limit exceeded (10,000,000 instructions, guards against infinite loops)
+
+`char-in` at EOF is *not* an error. It pushes `-1`.
+
+---
+
+## Runtime limits
+
+- **Steps:** 10,000,000 ops per run (`MAX_STEPS` in `src/invisible-ink.c:314`). Override by editing the source.
+- **Call depth:** 20,000 nested `call`s.
+- **Memory:** heap-grown (`g_mem`), doubled as needed, zero-filled.
+- **I/O:** `char-in` reads UTF-8 codepoints from stdin; `char-out`/`num-out`/`sleep`/`char-in` all `fflush(stdout)` before blocking/sleeping.
+
+Disassemble without running: `./ink -d program.txt` dumps parsed words/blocks.
 
 ---
 
@@ -155,6 +227,12 @@ it anyway.
 
 ---
 
+## IDE
+
+The bundled editor (`ide/ink-ide.c`, built as `InkIDE`) renders each spec codepoint as a 2-letter glyph (`it`/`nb`/`fg`/`th`/`ha`/`d0`/`d1`/`id`/`pu`/`mm`/`en`/`em`/`tp`/`nj`/`zj`/`wj`/`fa`/`ls`/`ps`/`zs`/`bo`/`is`/`ip`/`lr`/`rl`/`sh`) so invisible ops are visible. `Ctrl-K` + two letters inserts the corresponding codepoint; `Ctrl-G` shows the full legend. All 26 current spec codepoints are covered, including `is` (rand), `ip` (store), `lr` (load), `rl` (sleep), `sh` (soft hyphen).
+
+---
+
 ## Full codepoint table
 
 | Codepoint | Name | Op |
@@ -166,9 +244,14 @@ it anyway.
 | U+200A | HAIR SPACE | push literal |
 | U+2005 | FOUR-PER-EM SPACE | literal digit `0` |
 | U+2006 | SIX-PER-EM SPACE | literal digit `1` |
-| U+3000 | IDEOGRAPHIC SPACE | numeric print + newline |
+| U+3000 | IDEOGRAPHIC SPACE | numeric print (no newline) |
 | U+2008 | PUNCTUATION SPACE | char-out |
 | U+205F | MEDIUM MATHEMATICAL SPACE | char-in (`-1` on EOF) |
+| U+2063 | INVISIBLE SEPARATOR | `rand` (`n -- r`, `0 <= r < n`) |
+| U+2064 | INVISIBLE PLUS | `store` (`addr value --`) |
+| U+200E | LEFT-TO-RIGHT MARK | `load` (`addr -- value`) |
+| U+200F | RIGHT-TO-LEFT MARK | `sleep` (`ms --`) |
+| U+00AD | SOFT HYPHEN | literal terminator + `char-out` |
 | U+2002 | EN SPACE | arity: negate / subtract / modulo |
 | U+2003 | EM SPACE | arity: identity / add / divide |
 | U+2004 | THREE-PER-EM SPACE | arity: sign / multiply / exponent |
