@@ -485,13 +485,132 @@ word word_9
     load
     push 4
     div
-    call 7
+    push 115
+    swap
+    store
     push 110
     load
     push 4
     mod
+    push 116
+    swap
+    store
+    push 9484
+    char-out
+    push 9472
+    char-out
+    push 9472
+    char-out
+    push 9472
+    char-out
+    push 9472
+    char-out
+    push 9472
+    char-out
+    push 9488
+    char-out
+    push 10
+    char-out
+    push 9474
+    char-out
+    push 115
+    load
+    push 9
+    sub
+    dup
+    mul
+    sign
+    push 1
+    swap
+    sub
+    if {
+        push 115
+        load
+        call 7
+        push 32
+        char-out
+    } else {
+        push 49
+        char-out
+        push 48
+        char-out
+    }
+    push 32
+    char-out
+    push 32
+    char-out
+    push 32
+    char-out
+    push 9474
+    char-out
+    push 10
+    char-out
+    push 9474
+    char-out
+    push 32
+    char-out
+    push 32
+    char-out
+    push 116
+    load
     call 8
     push 32
+    char-out
+    push 32
+    char-out
+    push 9474
+    char-out
+    push 10
+    char-out
+    push 9474
+    char-out
+    push 32
+    char-out
+    push 32
+    char-out
+    push 32
+    char-out
+    push 115
+    load
+    push 9
+    sub
+    dup
+    mul
+    sign
+    push 1
+    swap
+    sub
+    if {
+        push 32
+        char-out
+        push 115
+        load
+        call 7
+    } else {
+        push 49
+        char-out
+        push 48
+        char-out
+    }
+    push 9474
+    char-out
+    push 10
+    char-out
+    push 9492
+    char-out
+    push 9472
+    char-out
+    push 9472
+    char-out
+    push 9472
+    char-out
+    push 9472
+    char-out
+    push 9472
+    char-out
+    push 9496
+    char-out
+    push 10
     char-out
 
 word word_10
@@ -955,11 +1074,85 @@ word word_21
         sub
         mul
         if {
-            push 63
+            push 9484
             char-out
-            push 63
+            push 9472
             char-out
-            push 32
+            push 9472
+            char-out
+            push 9472
+            char-out
+            push 9472
+            char-out
+            push 9472
+            char-out
+            push 9488
+            char-out
+            push 10
+            char-out
+            push 9474
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9474
+            char-out
+            push 10
+            char-out
+            push 9474
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9474
+            char-out
+            push 10
+            char-out
+            push 9474
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9617
+            char-out
+            push 9474
+            char-out
+            push 10
+            char-out
+            push 9492
+            char-out
+            push 9472
+            char-out
+            push 9472
+            char-out
+            push 9472
+            char-out
+            push 9472
+            char-out
+            push 9472
+            char-out
+            push 9496
+            char-out
+            push 10
             char-out
         } else {
             push 122
