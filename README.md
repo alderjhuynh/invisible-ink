@@ -189,6 +189,253 @@ and it already is.
 
 Disassemble without running: `./ink -d program.txt` dumps parsed words/blocks.
 
+## Quill (mnemonic assembly)
+
+**Quill is the mnemonic assembly language for Invisible Ink.** You write Quill
+(`*.q`), the assembler inks it. Every mnemonic compiles to a specific run of
+invisible Unicode codepoints, and a disassembler can recover a structurally
+equivalent Quill program from any Invisible Ink source. 
+
+### Usage
+
+```sh
+./quill assemble program.q -o program.txt
+./quill disassemble program.txt
+./quill disassemble program.txt -o program.q
+```
+
+Examples in `examples/quill/` (`add.q`, `fib.q`, `countdown.q`, `echo.q`).
+
+### Lexical structure
+
+- Tokens are separated by any whitespace (spaces, tabs, newlines).
+- `;` starts a comment that runs to end of line. Comments are stripped
+  entirely and never affect emitted output.
+- Identifiers (word names, memory slot names): `[a-zA-Z_][a-zA-Z0-9_-]*`.
+- Integer literals: an optional `-`, then one or more decimal digits.
+- Keywords: `word`, `if`, `else`, `let`, `call`, `halt`, and the op
+  mnemonics in the tables below, are reserved and cannot be used as identifiers.
+- `{` and `}` delimit `if`/`else` blocks only.
+
+### Program structure
+
+A Quill source file is a sequence of **word definitions**:
+
+```
+word <name>
+    <statement>
+    <statement>
+    ...
+```
+
+- The **first** `word` block in the file is the entry point, regardless of
+  its name, compiling to Ink word 0.
+- Every subsequent `word` block is assigned the next index in definition
+  order (1, 2, 3, ...).
+- A word body ends at the next `word` keyword or end of file. There is no
+  explicit `end`.
+- Forward references to words and slots are allowed. `call` may reference
+  a word defined later in the file.
+
+### Stack operations
+
+| Mnemonic | Stack effect | Emits |
+|---|---|---|
+| `dup`  | `a -- a a`   | `U+2062` ×1 |
+| `swap` | `a b -- b a` | `U+00A0` ×1 |
+| `drop` | `a --`       | `U+2007` ×1 |
+| `rot`  | `a b c -- b c a` | `U+2009` ×1 |
+
+### Arithmetic
+
+Invisible Ink packs three operations onto each of three codepoints via
+run-length (arity 1/2/3). Quill unpacks this into nine flat, unambiguous
+mnemonics:
+
+| Mnemonic | Stack effect | Underlying codepoint × arity |
+|---|---|---|
+| `neg`  | `a -- -a`     | `U+2002` ×1 |
+| `sub`  | `a b -- a-b`  | `U+2002` ×2 |
+| `mod`  | `a b -- a%b`  | `U+2002` ×3 |
+| `id`   | `a -- a`      | `U+2003` ×1 |
+| `add`  | `a b -- a+b`  | `U+2003` ×2 |
+| `div`  | `a b -- a/b`  | `U+2003` ×3 |
+| `sign` | `a -- sgn(a)` | `U+2004` ×1 |
+| `mul`  | `a b -- a*b`  | `U+2004` ×2 |
+| `pow`  | `a b -- a^b`  | `U+2004` ×3 |
+
+**Negative literals** are not a separate literal form: `push -5`
+assembles to `push 5` immediately followed by `neg`.
+
+### Literals
+
+```
+push <integer>
+```
+
+Compiles to `U+200A HAIR SPACE`, the binary digits of the integer's absolute
+value (most-significant bit first, via `U+2005 FOUR-PER-EM`/`U+2006 SIX-PER-EM
+SPACE`), then `U+2000 EN QUAD`. A negative operand triggers the `neg`
+expansion described above.
+
+### I/O
+
+| Mnemonic | Effect |
+|---|---|
+| `num-out`  | pop, print as decimal number (no newline; emit `10` via `char-out` for line break) |
+| `char-out` | pop, print as one UTF-8 codepoint, no newline |
+| `char-in`  | read one codepoint from stdin, push its code point (`-1` on EOF) |
+
+### Control flow
+
+#### `if` / `else`
+
+```
+if {
+    <statements run when top-of-stack is truthy, popped first>
+} else {
+    <statements run when falsy>
+}
+```
+
+The `else` block is optional:
+
+```
+if {
+    <statements>
+}
+```
+
+Compiles directly to `U+2060 WORD JOINER`, `U+200C ZWNJ ... U+200D ZWJ`,
+optionally followed by a second `U+200C ZWNJ ... U+200D ZWJ`.
+
+#### `call`
+
+```
+call <word-name>
+```
+
+Resolves `<word-name>` to its word index at assemble time and emits
+`push <index>` followed by `U+2061 FUNCTION APPLICATION`. A raw numeric form,
+`call 3`, is also legal for calling a word with no convenient name (or one
+produced by disassembly).
+
+#### `halt`
+
+```
+halt
+```
+
+Emits `U+200B ZERO WIDTH SPACE`, terminating the program immediately.
+
+#### Recursion
+
+Like in Ink, there is no dedicated loop construct: a word
+that `call`s itself, guarded by an `if`, is the only iteration mechanism.
+
+```
+word countdown          ; ( n -- )
+    dup
+    if {
+        dup
+        num-out
+        push 1
+        sub
+        call countdown
+    } else {
+        drop
+    }
+```
+
+### Memory
+
+Invisible Ink's `store`/`load` address a flat integer-indexed memory tape
+directly. Quill adds named slots as pure sugar over that same tape:
+
+```
+let <name> = <integer>
+```
+
+Declares a slot, assigns it the next free address at assemble time, and
+emits the initializer as `push <addr>`, `push <integer>`, `store` at the
+point where the `let` appears. `let` may only appear inside a word body.
+There is no separate top-of-file data section, since Invisible Ink has no
+such concept either.
+
+```
+load <name>     ; pushes the slot's current value
+store <name>    ; pops a value and writes it to the slot
+```
+
+`load`/`store` on a bare address are also legal (`push 4`, then `load` /
+`store`, exactly as in raw Invisible Ink) for cases with no natural name.
+
+```
+word main
+    let counter = 0
+    push 3
+    store counter
+    load counter
+    num-out         ; prints 3
+```
+
+### Ops I just added to Ink
+
+The ops I just added to the readme after I wrote them into the interpreter
+exist in Quill too:
+
+| Mnemonic | Stack effect | Codepoint |
+|---|---|---|
+| `rand`  | `n -- r` (uniform `0 <= r < n`) | `U+2063` |
+| `sleep` | `ms --` (pause) | `U+200F` |
+
+`store`/`load` above already cover `U+2064` / `U+200E`.
+
+### Round-tripping and disassembly
+
+Disassembling raw Invisible Ink back to Quill is a near-exact inverse of
+emission, with one caveat: word and slot names are assembler-side only 
+and are not encoded in the codepoint stream.
+
+A disassembler can recover correct structure but not original names. 
+Round-tripped Quill is guaranteed to be *semantically* identical to the input;
+it is not guaranteed to look like whatever Quill source (if any) originally 
+produced that program.
+
+Disassembly via `./ink -d program.txt` or `./quill disassemble program.txt`
+dumps parsed words/blocks with these placeholder names.
+
+### Example
+
+```
+; Fibonacci, printed up to n terms.
+word main
+    let n = 10
+    let a = 0
+    let b = 1
+    load n
+    call loop
+    halt
+
+word loop               ; ( count -- )
+    dup
+    if {
+        load a
+        num-out
+        load a
+        load b
+        add             ; a + b
+        load b
+        store a         ; a <- old b
+        store b         ; b <- a + b
+        push 1
+        sub
+        call loop
+    } else {
+        drop
+    }
+```
+
 ---
 
 ## Normalization policy

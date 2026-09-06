@@ -25,3 +25,20 @@ work at a terminal as well as with piped input.
 
 Some examples are included.
 
+## Quill (mnemonic assembly)
+
+Quill is a readable assembly over Invisible Ink. See `../README.md` (Quill section) for the full spec.
+
+```sh
+python3 ../quill.py assemble program.q -o program.txt   # assemble
+python3 ../quill.py disassemble program.txt -o program.q # disassemble
+../quill assemble program.q -o program.txt               # via wrapper
+```
+
+- `word <name>` defines words; first is entry (word 0).
+- `push <int>`, `dup`/`swap`/`drop`/`rot`, `neg`/`sub`/`mod`/`id`/`add`/`div`/`sign`/`mul`/`pow`, `num-out`/`char-out`/`char-in`, `rand`/`sleep`, `load`/`store`, `call <word>`/`halt`, `if { } else { }`, `let <slot> = <int>`.
+- Word order defines indices; `call` resolves names. `let` assigns sequential memory addresses; `load`/`store <name>` sugar emits `push <addr>` + `load` / `push <addr>` + `swap` + `store`.
+- `push -5` is sugar for `push 5` + `neg`.
+- Tokens are whitespace-separated; `;` starts comment to end of line.
+```
+

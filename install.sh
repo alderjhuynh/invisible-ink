@@ -10,7 +10,7 @@ pushd "${SCRIPT_DIR}/src" > /dev/null
 
 if [ ! -f "ink" ]; then
     echo "No 'ink' binary found, building..."
-    make
+    make ink
 fi
 
 if [ ! -f "ink" ]; then
@@ -21,6 +21,20 @@ fi
 echo "Installing 'ink' to ${INSTALL_DIR}/ink..."
 sudo cp -f "ink" "${INSTALL_DIR}/ink"
 sudo chmod +x "${INSTALL_DIR}/ink"
+
+if [ ! -f "quill" ]; then
+    echo "No 'quill' binary found, building..."
+    make quill
+fi
+
+if [ ! -f "quill" ]; then
+    echo "Error: 'quill' binary still not found, exiting." >&2
+    exit 1
+fi
+
+echo "Installing 'quill' to ${INSTALL_DIR}/quill..."
+sudo cp -f "quill" "${INSTALL_DIR}/quill"
+sudo chmod +x "${INSTALL_DIR}/quill"
 
 popd > /dev/null
 
@@ -45,4 +59,5 @@ popd > /dev/null
 
 echo "Done."
 echo "'ink <file>'    is now available globally."
+echo "'quill <cmd>'  is now available globally."
 echo "'inkide <file>' is now available globally."

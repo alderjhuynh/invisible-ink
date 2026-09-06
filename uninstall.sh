@@ -12,6 +12,14 @@ else
     echo "Not found, skipping."
 fi
 
+echo "Uninstalling 'quill' from ${INSTALL_DIR}/quill..."
+if [ -f "${INSTALL_DIR}/quill" ]; then
+    sudo rm -f "${INSTALL_DIR}/quill"
+    echo "Removed."
+else
+    echo "Not found, skipping."
+fi
+
 echo "Uninstalling 'inkide' from ${INSTALL_DIR}/inkide..."
 if [ -f "${INSTALL_DIR}/inkide" ]; then
     sudo rm -f "${INSTALL_DIR}/inkide"
