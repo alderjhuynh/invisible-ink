@@ -9,6 +9,8 @@ as you like: **any character not defined below is ignored entirely.** This allow
 
 Writing this language is genuinely awful, so I've made its own text editor. Just to let you get a sense of how painful this language is to write, I've added the raw inputs I wrote in the IDE for the blackjack example, you can view the raw here: [view the blackjack raw](blackjack-raw.md)
 
+Just for completeness, I figured I'd also disassemble the blackjack example too. You can view it here: [view the blackjack disassembled quill source](blackjack-disassemble.q)
+
 ---
 
 ## Program structure
