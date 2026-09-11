@@ -1,3 +1,8 @@
 .DS_Store
 src/ink
-src/quill
+src/*.o
+*.o
+*.a
+*.so
+*.dSYM/
+*.d

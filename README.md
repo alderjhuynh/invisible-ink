@@ -13,6 +13,58 @@ Just for completeness, I figured I'd also disassemble the blackjack example too.
 
 ---
 
+## Installation
+
+```sh
+make              # builds src/ink
+./install.sh      # installs ink to /usr/local/bin/ink
+```
+
+---
+
+## `ink`
+
+Everything is now under one command. `quill` still works as a shim but is deprecated.
+
+```sh
+ink <command> [options] [args]
+ink -h | --help
+ink -V | --version
+ink help <command>
+```
+
+### Commands and args
+
+| Command | Aliases | Args / Options | Description |
+|---|---|---|---|
+| `run <file>` | `r` | `<file>` `--steps <N>` / `--max-steps <N>` `--depth <N>` / `--max-depth <N>` `--stats` `-h/--help` | Run an Invisible Ink program. `<file>` is UTF-8 (cover text allowed, `FEFF`-embedded-aware). `--steps` overrides step limit (default 10M), `--depth` overrides call-depth (default 20k), `--stats` prints `steps/words/stack/mem/elapsed` to stderr. Legacy `ink <file>` and `ink <file> --stats` still work. |
+| `dump <file>` | — | `<file>` | Dump parsed AST in internal style (`word 0:` / `then:` / `else:`). Legacy `ink -d <file>` maps here. |
+| `disassemble <input> [-o <output>]` | `disasm`, `decompile`, `d` | `<input>` `-o`/`--output <file>` `-h/--help` | Decompile Invisible Ink → Quill (`word word_0` …). Writes to stdout if `-o` omitted. Replaces `quill disassemble`. |
+| `assemble <input> [-o <output>]` | `asm`, `compile`, `build`, `c` | `<input>` `-o`/`--output <file>` `-h/--help` | Assemble Quill `.q` → Invisible Ink. Writes to stdout if `-o` omitted. Replaces `quill assemble`. |
+| `check <file>` | — | `<file>` `-h/--help` | Parse + validate without executing. Prints word count / spec codepoints / embedded status. |
+| `edit [file]` | `ide`, `ed` | `[file]` `--selftest` `-h/--help` | Launch InkIDE visual editor. No file → new buffer. `--selftest` runs internal tests. Also available as `ink ide`. |
+| `help [command]` | `-h`, `--help` | `[command]` | Show global or per-command help. |
+
+Global help and per-command help are available:
+
+```sh
+ink help              # global usage
+ink help run          # run options
+ink help disassemble  # disassemble options
+ink help assemble
+ink help edit
+ink run --help        # same as above
+ink disasm --help
+```
+
+**Legacy compatibility**
+
+* `ink program.txt` → `ink run program.txt`
+* `ink -d program.txt` → `ink dump program.txt`
+* `quill assemble/disassemble …` → shim forwards to `ink assemble/disassemble`
+
+---
+
 ## Program structure
 
 An Invisible Ink source consists of one or more **words**, separated by
@@ -184,12 +236,13 @@ and it already is.
 
 ## Runtime limits
 
-- **Steps:** 10,000,000 ops per run (`MAX_STEPS` in `src/invisible-ink.c:314`). Override by editing the source.
-- **Call depth:** 20,000 nested `call`s.
+- **Steps:** 10,000,000 ops per run (`g_max_steps` in `src/vm.c` / `src/ink.h`, default `DEFAULT_MAX_STEPS`). Override at runtime: `ink run --steps 5000000 program.txt` or `--max-steps`.
+- **Call depth:** 20,000 nested `call`s (`DEFAULT_MAX_DEPTH`). Override: `ink run --depth 1000 program.txt`.
 - **Memory:** heap-grown (`g_mem`), doubled as needed, zero-filled.
 - **I/O:** `char-in` reads UTF-8 codepoints from stdin; `char-out`/`num-out`/`sleep`/`char-in` all `fflush(stdout)` before blocking/sleeping.
 
-Disassemble without running: `./ink -d program.txt` dumps parsed words/blocks.
+Validate without running: `ink check program.txt`
+Dump parsed words/blocks: `ink dump program.txt` (internal) or `ink disassemble program.txt` (to Quill).
 
 ## Quill (mnemonic assembly)
 
@@ -201,9 +254,18 @@ equivalent Quill program from any Invisible Ink source.
 ### Usage
 
 ```sh
-./quill assemble program.q -o program.txt
-./quill disassemble program.txt
-./quill disassemble program.txt -o program.q
+ink assemble program.q -o program.txt
+ink disassemble program.txt
+ink disassemble program.txt -o program.q
+# aliases:
+ink asm program.q -o program.txt
+ink disasm program.txt
+```
+
+Legacy `quill` binary still works as a shim:
+```sh
+quill assemble program.q -o program.txt   # deprecated, forwards to ink
+quill disassemble program.txt
 ```
 
 Examples in `examples/quill/` (`add.q`, `fib.q`, `countdown.q`, `echo.q`).
@@ -404,8 +466,7 @@ Round-tripped Quill is guaranteed to be *semantically* identical to the input;
 it is not guaranteed to look like whatever Quill source (if any) originally 
 produced that program.
 
-Disassembly via `./ink -d program.txt` or `./quill disassemble program.txt`
-dumps parsed words/blocks with these placeholder names.
+Disassembly via `ink disassemble program.txt` or `ink dump program.txt` (or legacy `ink -d` / `quill disassemble`) dumps parsed words/blocks with placeholder names.
 
 ### Example
 
@@ -478,7 +539,19 @@ it anyway.
 
 ## IDE
 
-The bundled editor (`ide/ink-ide.c`, built as `InkIDE`) renders each spec codepoint as a 2-letter glyph (`it`/`nb`/`fg`/`th`/`ha`/`d0`/`d1`/`id`/`pu`/`mm`/`en`/`em`/`tp`/`nj`/`zj`/`wj`/`fa`/`ls`/`ps`/`zs`/`bo`/`is`/`ip`/`lr`/`rl`/`sh`) so invisible ops are visible. `Ctrl-K` + two letters inserts the corresponding codepoint; `Ctrl-G` shows the full legend. All 26 current spec codepoints are covered, including `is` (rand), `ip` (store), `lr` (load), `rl` (sleep), `sh` (soft hyphen).
+The bundled editor (`src/editor.c`, built into the single `ink` binary) renders each spec codepoint as a 2-letter glyph (`it`/`nb`/`fg`/`th`/`ha`/`d0`/`d1`/`id`/`pu`/`mm`/`en`/`em`/`tp`/`nj`/`zj`/`wj`/`fa`/`ls`/`ps`/`zs`/`bo`/`is`/`ip`/`lr`/`rl`/`sh`) so invisible ops are visible. `Ctrl-K` + two letters inserts the corresponding codepoint; `Ctrl-G` shows the full legend. All 26 current spec codepoints are covered, including `is` (rand), `ip` (store), `lr` (load), `rl` (sleep), `sh` (soft hyphen).
+
+Launch via the unified CLI:
+
+```sh
+ink edit myfile.txt      # or ink ide myfile.txt
+ink edit --selftest      # run editor self-tests
+# legacy compatibility shims (forward to `ink edit`):
+inkide myfile.txt
+InkIDE myfile.txt
+```
+
+Build is modular: `make` compiles `src/*.c` → `src/ink` (still a single binary).
 
 ---
 

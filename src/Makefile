@@ -2,14 +2,18 @@ CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -O2
 CFLAGS += -D_POSIX_C_SOURCE=200809L
 
-all: ink quill
+SRCS := util.c parse.c vm.c quill.c editor.c cli.c main.c
+OBJS := $(SRCS:.c=.o)
 
-ink: invisible-ink.c
-	$(CC) $(CFLAGS) -o ink invisible-ink.c
+all: ink
 
-quill: quill.c
-	$(CC) $(CFLAGS) -o quill quill.c
+ink: $(OBJS)
+	$(CC) $(CFLAGS) -o ink $(OBJS)
 
-.PHONY: clean
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
 clean:
-	rm -f ink quill
+	rm -f ink $(OBJS)
+
+.PHONY: all clean

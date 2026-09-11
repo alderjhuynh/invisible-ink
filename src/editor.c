@@ -1,3 +1,6 @@
+#include "editor.h"
+#include "ink.h"
+#include "util.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -5,25 +8,24 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <time.h>
+#include <unistd.h>
 #include <ctype.h>
 #include <stdarg.h>
-#include <unistd.h>
+#include <limits.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <signal.h>
 
-typedef uint32_t cp_t;
-
 typedef enum {
-    CAT_STACK = 1,   /* dup/swap/drop/rot                            -> cyan   */
-    CAT_LITERAL,     /* literal open + binary digits                 -> yellow */
-    CAT_IO,          /* num-out/char-out/char-in                     -> green  */
-    CAT_ARITH,       /* arity-dispatched EN/EM/THREE                 -> magenta*/
-    CAT_BLOCK,       /* ZWNJ/ZWJ/WJ/FA (blocks, if, call)            -> blue */
-    CAT_STRUCT,      /* LS/PS/ZWSP/BOM (document structure)          -> red */
-    CAT_DIM,         /* tab / CR / raw control bytes                 -> dim grey */
-    CAT_SUSPECT      /* non-spec but easily-confused invisible cp    -> dim yellow */
+    CAT_STACK = 1,
+    CAT_LITERAL,
+    CAT_IO,
+    CAT_ARITH,
+    CAT_BLOCK,
+    CAT_STRUCT,
+    CAT_DIM,
+    CAT_SUSPECT
 } Category;
 
 typedef struct {
@@ -379,14 +381,13 @@ static RenderInfo classify_cp(cp_t cp) {
         return r;
     }
     r.is_token = false;
-    r.width = 1; /* this is probably right :sob: */
+    r.width = 1;
     return r;
 }
 
 static void disable_raw_mode(void) {
     if (E.raw_enabled) {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios);
-        /* leave alternate screen, restore cursor */
         ssize_t _w = write(STDOUT_FILENO, "\x1b[?1049l\x1b[?25h", 14); (void)_w;
     }
 }
@@ -654,14 +655,14 @@ static void ab_free(AppendBuf *ab) { free(ab->b); }
 
 static const char *cat_sgr_on(Category cat) {
     switch (cat) {
-        case CAT_STACK:   return "\x1b[30;46m"; /* black on cyan */
-        case CAT_LITERAL: return "\x1b[30;43m"; /* black on yellow */
-        case CAT_IO:      return "\x1b[30;42m"; /* black on green */
-        case CAT_ARITH:   return "\x1b[30;45m"; /* black on magenta */
-        case CAT_BLOCK:   return "\x1b[97;44m"; /* white on blue */
-        case CAT_STRUCT:  return "\x1b[97;41m"; /* white on red */
-        case CAT_DIM:     return "\x1b[2;90m";  /* dim grey, no bg */
-        case CAT_SUSPECT: return "\x1b[1;100;93m"; /* bold bright-yellow on grey bg */
+        case CAT_STACK:   return "\x1b[30;46m";
+        case CAT_LITERAL: return "\x1b[30;43m";
+        case CAT_IO:      return "\x1b[30;42m";
+        case CAT_ARITH:   return "\x1b[30;45m";
+        case CAT_BLOCK:   return "\x1b[97;44m";
+        case CAT_STRUCT:  return "\x1b[97;41m";
+        case CAT_DIM:     return "\x1b[2;90m";
+        case CAT_SUSPECT: return "\x1b[1;100;93m";
     }
     return "\x1b[0m";
 }
@@ -696,30 +697,10 @@ static void cursor_wrapped_pos(const Line *ln, size_t cx, int avail, int *out_ro
         }
         col += w;
     }
-    // if cursor is at end and the last token exactly fills the row, it should wrap to next row
-    // the loop above already handles col == avail meaning next char would wrap, but cursor itself
-    // at that column should be at start of next row only if the previous line was full.
-    // The above logic leaves col == avail as valid; we clamp: if col >= avail, wrap
     if (col >= avail && cx < ln->len) {
-        // only wrap if next token would not fit, but cursor at cx means we are between chars
-        // if col == avail, the cursor is at column avail which is past the visible area,
-        // so it belongs to next row
-        // However our row/col already represents the position before the next char,
-        // and if col == avail, that means previous char filled the row exactly.
-        // Cursor should be at beginning of next row.
-        // Check if we are not already at a wrap boundary
-        // The loop for cx already included the last char; if col == avail, we have filled a row.
-        // Move to next row.
         if (col == avail) {
-            // This case already implies the last char ended exactly at avail.
-            // The cursor after it should be at next row start, unless we keep it at end of row.
-            // We choose to keep it visible at end of row rather than next row to avoid jumping.
-            // So do nothing: keep row, col==avail (will be clamped by scroll)
-            // But rendering needs to handle it: we treat col==avail as next row
             row++;
             col = 0;
-            // Re-adjust: only if cx == ln->len and the line was exactly filled, showing cursor at next row
-            // is more honest. Keep it.
         }
     }
     if (out_row) *out_row = row;
@@ -740,9 +721,6 @@ static void render_line(AppendBuf *ab, const Line *ln, int coloff, int avail,
     int col = 0;
     int emitted = 0;
     if (cursor_col_out) *cursor_col_out = -1;
-    // For backwards compatibility the old render_line now delegates to wrapped logic
-    // with target_row = 0. Callers that need wrapping should use render_wrapped_row.
-    // Here we simply render the first wrapped row (used only by legacy paths if any).
     for (size_t i = 0; i <= ln->len; i++) {
         if ((long)i == want_cx && cursor_col_out)
             *cursor_col_out = col;
@@ -788,7 +766,6 @@ static void render_wrapped_row(AppendBuf *ab, const Line *ln, int avail, int tar
             continue;
         }
         if (cur_row > target_row) break;
-        // cur_row == target_row
         if (r.is_token) {
             ab_str(ab, cat_sgr_on(r.cat));
             ab_append(ab, r.label, 2);
@@ -801,7 +778,6 @@ static void render_wrapped_row(AppendBuf *ab, const Line *ln, int avail, int tar
         }
         cur_col += w;
     }
-    // cursor at end of line that exactly filled a row: handle
     if (want_cx >= 0 && (size_t)want_cx == ln->len && cursor_col_out && *cursor_col_out == -1) {
         int r, c;
         cursor_wrapped_pos(ln, (size_t)want_cx, avail, &r, &c);
@@ -821,7 +797,7 @@ static int column_for_cx(const Line *ln, size_t cx) {
 static void editor_scroll(void) {
     int avail = E.screencols - E.gutter_w;
     if (avail < 1) avail = 1;
-    E.coloff = 0; // horizontal scroll disabled - we wrap instead
+    E.coloff = 0;
     int cur_global = global_wrapped_row(E.lines, E.cy, E.cx, avail);
     if (cur_global < (int)E.rowoff) E.rowoff = (size_t)cur_global;
     if (cur_global >= (int)(E.rowoff + (size_t)E.textrows)) E.rowoff = (size_t)(cur_global - E.textrows + 1);
@@ -905,8 +881,6 @@ static void refresh_screen(void) {
 
     int avail = E.screencols - E.gutter_w;
     if (avail < 1) avail = 1;
-
-    // wrapped cursor position
     int cur_sub_row = 0, cur_sub_col = 0;
     int cur_global = global_wrapped_row(E.lines, E.cy, E.cx, avail);
     cursor_wrapped_pos(&E.lines[E.cy], E.cx, avail, &cur_sub_row, &cur_sub_col);
@@ -915,7 +889,6 @@ static void refresh_screen(void) {
     int cursor_row = -1, cursor_col = -1;
     for (int y = 0; y < E.textrows; y++) {
         int target_global = (int)E.rowoff + y;
-        // find logical line and sub-row for this global row
         int cur = 0;
         size_t filerow = (size_t)-1;
         int subrow = -1;
@@ -934,7 +907,6 @@ static void refresh_screen(void) {
             if (subrow == 0) {
                 snprintf(gutter, sizeof(gutter), "\x1b[2;90m%*zu \x1b[0m", E.gutter_w - 1, filerow + 1);
             } else {
-                // continuation line: show blank gutter with a dim marker
                 snprintf(gutter, sizeof(gutter), "\x1b[2;90m%*s \x1b[0m", E.gutter_w - 1, "");
             }
             ab_str(&ab, gutter);
@@ -950,7 +922,6 @@ static void refresh_screen(void) {
         }
         ab_str(&ab, "\r\n");
     }
-    // if cursor is at a position that would be beyond the last rendered row due to exact fill, ensure it stays visible
     if (cursor_row == -1 && cur_global >= (int)E.rowoff && cur_global < (int)E.rowoff + E.textrows) {
         cursor_row = cur_global - (int)E.rowoff;
         cursor_col = E.gutter_w + cur_sub_col;
@@ -1153,7 +1124,7 @@ static void process_keypress(void) {
         }
 
         case KEY_ESC:
-            break; /* no-op */
+            break;
 
         default:
             if (k >= 0 && k <= 0x10FFFF) editor_insert_cp((cp_t)k);
@@ -1163,13 +1134,13 @@ static void process_keypress(void) {
     if (k != KEY_CTRL_Q) E.quit_confirm = 0;
 }
 
-static int selftest_failures = 0;
+int selftest_failures = 0;
 #define CHECK(cond, msg) do { \
     if (!(cond)) { fprintf(stderr, "FAIL: %s\n", msg); selftest_failures++; } \
     else fprintf(stderr, "ok:   %s\n", msg); \
 } while (0)
 
-static void run_selftest(void) {
+void run_selftest(void) {
     CHECK(SPEC_COUNT == 26, "spec table has all 26 codepoints");
     bool all_roundtrip = true;
     for (size_t i = 0; i < SPEC_COUNT; i++) {
@@ -1198,7 +1169,7 @@ static void run_selftest(void) {
     RenderInfo rnorm = classify_cp('A');
     CHECK(!rnorm.is_token && rnorm.width == 1, "plain ASCII renders as itself");
 
-    RenderInfo rsoft = classify_cp(0x00AD); /* SOFT HYPHEN */
+    RenderInfo rsoft = classify_cp(0x00AD);
     CHECK(rsoft.is_token && rsoft.cat == CAT_LITERAL, "soft hyphen is a spec literal terminator, not confusable");
 
     cp_t sample[] = { 'h', 'i', ' ', 0x00A0, 0x2029, 0x1F600, 0x3000 };
@@ -1271,11 +1242,8 @@ static void run_selftest(void) {
     }
 
     {
-        // raw save: spec cps become 2-letter mnemonics, normal text stays
         memset(&E, 0, sizeof(E));
-        // build buffer: "hi " + NBSP(swap/nb) + FA(call/fa) + newline + HAIR(ha)+D0(d0)+D1(d1)+LS(ls)
         cp_t raw_cps[] = { 'h','i',' ', 0x00A0, 0x2061, 0x200A, 0x2005, 0x2006, 0x2000 };
-        // single line: first 9 cps plus newline handling; we fake lines directly
         lines_insert_blank(0);
         for (size_t i = 0; i < 9; i++) line_insert_cp(&E.lines[0], E.lines[0].len, raw_cps[i]);
         E.had_trailing_newline = false;
@@ -1304,10 +1272,9 @@ static void run_selftest(void) {
     }
 
     {
-        // wrapping sanity: a line with many 2-width tokens should wrap
         int avail = 10;
         Line ln = {0};
-        for (int i = 0; i < 6; i++) line_insert_cp(&ln, ln.len, 0x00A0); // each width 2
+        for (int i = 0; i < 6; i++) line_insert_cp(&ln, ln.len, 0x00A0);
         int rows = line_wrapped_rows(&ln, avail);
         CHECK(rows == 2, "wrapping: 6*width2 in avail 10 needs 2 rows");
         int r,c;
@@ -1319,7 +1286,8 @@ static void run_selftest(void) {
     fprintf(stderr, "\n%s\n", selftest_failures == 0 ? "all checks passed" : "SOME CHECKS FAILED");
 }
 
-int main(int argc, char **argv) {
+
+static int ide_main(int argc, char **argv) {
     const char *path = NULL;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--selftest") == 0) {
@@ -1333,7 +1301,9 @@ int main(int argc, char **argv) {
     E.had_trailing_newline = true;
     if (path) E.filename = strdup(path);
 
+#ifdef SIGWINCH
     signal(SIGWINCH, handle_sigwinch);
+#endif
 
     if (path) {
         if (!load_file(path)) {
@@ -1353,4 +1323,27 @@ int main(int argc, char **argv) {
         process_keypress();
     }
     return 0;
+}
+
+int do_edit(int argc, char **argv){
+    for(int i=2;i<argc;i++) if(strcmp(argv[i],"-h")==0||strcmp(argv[i],"--help")==0){ 
+        extern void print_help_edit(const char *prog);
+        print_help_edit(argv[0]); return 0; }
+    for(int i=2;i<argc;i++) if(strcmp(argv[i],"--selftest")==0){ run_selftest(); return selftest_failures==0?0:1; }
+    const char *file_arg = NULL;
+    for(int i=2;i<argc;i++){
+        if(argv[i][0]=='-'){ fprintf(stderr,"ink edit: unknown option '%s'\n", argv[i]); 
+            extern void print_help_edit(const char *prog);
+            print_help_edit(argv[0]); return 2; }
+        if(!file_arg) file_arg=argv[i];
+        else { fprintf(stderr,"ink edit: unexpected argument '%s'\n", argv[i]); 
+            extern void print_help_edit(const char *prog);
+            print_help_edit(argv[0]); return 2; }
+    }
+    int ide_argc = 1 + (file_arg?1:0);
+    char *ide_argv[3];
+    ide_argv[0] = (char*)"ink edit";
+    if(file_arg) ide_argv[1] = (char*)file_arg;
+    ide_argv[ide_argc]=NULL;
+    return ide_main(ide_argc, ide_argv);
 }
