@@ -13,6 +13,9 @@ bool is_spec_cp(cp_t c) {
         case CP_ZWNJ: case CP_ZWJ: case CP_WJ: case CP_FA:
         case CP_LS: case CP_PS: case CP_ZWSP: case CP_BOM:
         case CP_INV_SEP: case CP_INV_PLUS: case CP_LRM: case CP_RLM: case CP_SOFT:
+        case CP_SOCK_CREATE: case CP_SOCK_BIND: case CP_SOCK_LISTEN: case CP_SOCK_ACCEPT:
+        case CP_SOCK_RECV: case CP_SOCK_SEND: case CP_SOCK_CLOSE:
+        case CP_FILE_OPEN: case CP_FILE_READ: case CP_FILE_STAT: case CP_DIR_LIST:
             return true;
         default:
             return false;

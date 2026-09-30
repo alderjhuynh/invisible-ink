@@ -63,6 +63,17 @@ static const SpecEntry SPEC_TABLE[] = {
     { 0x200E, "lr", "LEFT-TO-RIGHT MARK",        "load",                 CAT_STACK   },
     { 0x200F, "rl", "RIGHT-TO-LEFT MARK",        "sleep",                CAT_IO      },
     { 0x00AD, "sh", "SOFT HYPHEN",               "lit+char-out",         CAT_LITERAL },
+    { 0x2065, "sc", "NEXT LINE",                 "sock-create",          CAT_IO      },
+    { 0x2066, "sb", "LEFT-TO-RIGHT ISOLATE",     "sock-bind",            CAT_IO      },
+    { 0x2067, "sl", "RIGHT-TO-LEFT ISOLATE",     "sock-listen",          CAT_IO      },
+    { 0x2068, "sa", "FIRST STRONG ISOLATE",      "sock-accept",          CAT_IO      },
+    { 0x2069, "sr", "POP DIRECTIONAL ISOLATE",   "sock-recv",            CAT_IO      },
+    { 0x206A, "ss", "INHIBIT SYMMETRIC SWAPPING","sock-send",            CAT_IO      },
+    { 0x206B, "sx", "ACTIVATE SYMMETRIC SWAPPING","sock-close",          CAT_IO      },
+    { 0x206C, "fo", "INHIBIT ARABIC FORM SHAPING","file-open",           CAT_IO      },
+    { 0x206D, "fr", "ACTIVATE ARABIC FORM SHAPING","file-read",          CAT_IO      },
+    { 0x206E, "fs", "NATIONAL DIGIT SHAPES",     "file-stat",            CAT_IO      },
+    { 0x206F, "dl", "NOMINAL DIGIT SHAPES",      "dir-list",             CAT_IO      },
 };
 #define SPEC_COUNT (sizeof(SPEC_TABLE) / sizeof(SPEC_TABLE[0]))
 
@@ -1141,7 +1152,7 @@ int selftest_failures = 0;
 } while (0)
 
 void run_selftest(void) {
-    CHECK(SPEC_COUNT == 26, "spec table has all 26 codepoints");
+    CHECK(SPEC_COUNT == 37, "spec table has all 37 codepoints");
     bool all_roundtrip = true;
     for (size_t i = 0; i < SPEC_COUNT; i++) {
         const SpecEntry *s = &SPEC_TABLE[i];

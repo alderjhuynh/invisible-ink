@@ -41,7 +41,7 @@ static bool q_is_identifier(const char *tok){
     for(size_t i=1;tok[i];i++){ char c=tok[i]; if(!(isalnum((unsigned char)c)||c=='_'||c=='-')) return false; }
     return true;
 }
-static const char *Q_KEYWORDS[] = {"word","if","else","let","call","halt","push","dup","swap","drop","rot","neg","sub","mod","id","add","div","sign","mul","pow","num-out","char-out","char-in","rand","sleep","store","load",NULL};
+static const char *Q_KEYWORDS[] = {"word","if","else","let","call","halt","push","dup","swap","drop","rot","neg","sub","mod","id","add","div","sign","mul","pow","num-out","char-out","char-in","rand","sleep","store","load","sock-create","sock-bind","sock-listen","sock-accept","sock-recv","sock-send","sock-close","close","file-open","file-read","file-stat","file-close","dir-list",NULL};
 static bool q_is_keyword(const char *tok){ for(int i=0;Q_KEYWORDS[i];i++) if(strcmp(tok,Q_KEYWORDS[i])==0) return true; return false; }
 
 static bool q_tokenize(const char *src, size_t len, QTokenVec *out){
@@ -114,6 +114,19 @@ static bool q_mnemonic_to_cps_simple(const char *tok, QCpVec *out){
     if(strcmp(tok,"sleep")==0){ q_cv_push(out,CP_RLM); return true; }
     if(strcmp(tok,"store")==0){ q_cv_push(out,CP_INV_PLUS); return true; }
     if(strcmp(tok,"load")==0){ q_cv_push(out,CP_LRM); return true; }
+    if(strcmp(tok,"sock-create")==0){ q_cv_push(out,CP_SOCK_CREATE); return true; }
+    if(strcmp(tok,"sock-bind")==0){ q_cv_push(out,CP_SOCK_BIND); return true; }
+    if(strcmp(tok,"sock-listen")==0){ q_cv_push(out,CP_SOCK_LISTEN); return true; }
+    if(strcmp(tok,"sock-accept")==0){ q_cv_push(out,CP_SOCK_ACCEPT); return true; }
+    if(strcmp(tok,"sock-recv")==0){ q_cv_push(out,CP_SOCK_RECV); return true; }
+    if(strcmp(tok,"sock-send")==0){ q_cv_push(out,CP_SOCK_SEND); return true; }
+    if(strcmp(tok,"sock-close")==0){ q_cv_push(out,CP_SOCK_CLOSE); return true; }
+    if(strcmp(tok,"close")==0){ q_cv_push(out,CP_SOCK_CLOSE); return true; }
+    if(strcmp(tok,"file-close")==0){ q_cv_push(out,CP_SOCK_CLOSE); return true; }
+    if(strcmp(tok,"file-open")==0){ q_cv_push(out,CP_FILE_OPEN); return true; }
+    if(strcmp(tok,"file-read")==0){ q_cv_push(out,CP_FILE_READ); return true; }
+    if(strcmp(tok,"file-stat")==0){ q_cv_push(out,CP_FILE_STAT); return true; }
+    if(strcmp(tok,"dir-list")==0){ q_cv_push(out,CP_DIR_LIST); return true; }
     return false;
 }
 
@@ -157,7 +170,7 @@ static bool q_emit_block(QEmitCtx *ctx, size_t *p_ptr){
             int64_t val=atoll(body[p+1]);
             if(val<0){ q_encode_literal(word_cps,-val); q_cv_push(word_cps,CP_EN); q_cv_push(word_cps,CP_LS); } else q_encode_literal(word_cps,val);
             p+=2;
-        } else if(strcmp(tok,"dup")==0||strcmp(tok,"swap")==0||strcmp(tok,"drop")==0||strcmp(tok,"rot")==0||strcmp(tok,"neg")==0||strcmp(tok,"sub")==0||strcmp(tok,"mod")==0||strcmp(tok,"id")==0||strcmp(tok,"add")==0||strcmp(tok,"div")==0||strcmp(tok,"sign")==0||strcmp(tok,"mul")==0||strcmp(tok,"pow")==0||strcmp(tok,"num-out")==0||strcmp(tok,"char-out")==0||strcmp(tok,"char-in")==0||strcmp(tok,"rand")==0||strcmp(tok,"sleep")==0||strcmp(tok,"halt")==0||strcmp(tok,"load")==0||strcmp(tok,"store")==0||strcmp(tok,"call")==0){
+        } else if(strcmp(tok,"dup")==0||strcmp(tok,"swap")==0||strcmp(tok,"drop")==0||strcmp(tok,"rot")==0||strcmp(tok,"neg")==0||strcmp(tok,"sub")==0||strcmp(tok,"mod")==0||strcmp(tok,"id")==0||strcmp(tok,"add")==0||strcmp(tok,"div")==0||strcmp(tok,"sign")==0||strcmp(tok,"mul")==0||strcmp(tok,"pow")==0||strcmp(tok,"num-out")==0||strcmp(tok,"char-out")==0||strcmp(tok,"char-in")==0||strcmp(tok,"rand")==0||strcmp(tok,"sleep")==0||strcmp(tok,"halt")==0||strcmp(tok,"load")==0||strcmp(tok,"store")==0||strcmp(tok,"call")==0||strcmp(tok,"sock-create")==0||strcmp(tok,"sock-bind")==0||strcmp(tok,"sock-listen")==0||strcmp(tok,"sock-accept")==0||strcmp(tok,"sock-recv")==0||strcmp(tok,"sock-send")==0||strcmp(tok,"sock-close")==0||strcmp(tok,"close")==0||strcmp(tok,"file-close")==0||strcmp(tok,"file-open")==0||strcmp(tok,"file-read")==0||strcmp(tok,"file-stat")==0||strcmp(tok,"dir-list")==0){
             if(strcmp(tok,"halt")==0){ q_cv_push(word_cps,CP_ZWSP); p+=1; }
             else if(strcmp(tok,"call")==0){
                 if(p+1>=n){ q_set_error("call requires word name or index"); return false; }
@@ -287,6 +300,8 @@ static void sb_emit_block(SB *sb, Block *blk, int indent){
                 case OP_ADD: mn="add"; break; case OP_DIV: mn="div"; break; case OP_SIGN: mn="sign"; break; case OP_MUL: mn="mul"; break; case OP_POW: mn="pow"; break;
                 case OP_NUMOUT: mn="num-out"; break; case OP_CHAROUT: mn="char-out"; break; case OP_CHARIN: mn="char-in"; break;
                 case OP_CALL: mn="call"; break; case OP_HALT: mn="halt"; break; case OP_RAND: mn="rand"; break; case OP_STORE: mn="store"; break; case OP_LOAD: mn="load"; break; case OP_SLEEP: mn="sleep"; break;
+                case OP_SOCK_CREATE: mn="sock-create"; break; case OP_SOCK_BIND: mn="sock-bind"; break; case OP_SOCK_LISTEN: mn="sock-listen"; break; case OP_SOCK_ACCEPT: mn="sock-accept"; break; case OP_SOCK_RECV: mn="sock-recv"; break; case OP_SOCK_SEND: mn="sock-send"; break; case OP_SOCK_CLOSE: mn="sock-close"; break;
+                case OP_FILE_OPEN: mn="file-open"; break; case OP_FILE_READ: mn="file-read"; break; case OP_FILE_STAT: mn="file-stat"; break; case OP_DIR_LIST: mn="dir-list"; break;
                 default: mn="unknown"; break;
             }
             for(int k=0;k<indent;k++) sb_append(sb,"    ");

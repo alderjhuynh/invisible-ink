@@ -6,7 +6,7 @@
 #include <stddef.h>
 #include <setjmp.h>
 
-#define INK_VERSION "1.1.0"
+#define INK_VERSION "1.2.0"
 
 typedef uint32_t cp_t;
 
@@ -37,7 +37,19 @@ enum {
     CP_INV_PLUS= 0x2064,
     CP_LRM     = 0x200E,
     CP_RLM     = 0x200F,
-    CP_SOFT    = 0x00AD
+    CP_SOFT    = 0x00AD,
+    /* syscall extensions: socket + file */
+    CP_SOCK_CREATE = 0x2065,
+    CP_SOCK_BIND   = 0x2066,
+    CP_SOCK_LISTEN = 0x2067,
+    CP_SOCK_ACCEPT = 0x2068,
+    CP_SOCK_RECV   = 0x2069,
+    CP_SOCK_SEND   = 0x206A,
+    CP_SOCK_CLOSE  = 0x206B,
+    CP_FILE_OPEN   = 0x206C,
+    CP_FILE_READ   = 0x206D,
+    CP_FILE_STAT   = 0x206E,
+    CP_DIR_LIST    = 0x206F
 };
 
 /* opcode */
@@ -46,7 +58,10 @@ typedef enum {
     OP_NEG, OP_SUB, OP_MOD, OP_ID, OP_ADD, OP_DIV, OP_SIGN, OP_MUL, OP_POW,
     OP_NUMOUT, OP_CHAROUT, OP_CHARIN,
     OP_CALL, OP_IF, OP_HALT,
-    OP_RAND, OP_STORE, OP_LOAD, OP_SLEEP
+    OP_RAND, OP_STORE, OP_LOAD, OP_SLEEP,
+    OP_SOCK_CREATE, OP_SOCK_BIND, OP_SOCK_LISTEN, OP_SOCK_ACCEPT,
+    OP_SOCK_RECV, OP_SOCK_SEND, OP_SOCK_CLOSE,
+    OP_FILE_OPEN, OP_FILE_READ, OP_FILE_STAT, OP_DIR_LIST
 } OpCode;
 
 typedef struct Block Block;

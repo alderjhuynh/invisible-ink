@@ -185,6 +185,35 @@ Example: roll a d6 (1–6): `push 6; rand; push 1; add`.
 
 Pops `ms` and sleeps for `ms` milliseconds via `nanosleep`. No-op if `ms <= 0`. Flushes stdout before sleeping, so prior output is visible during the pause. Useful for animations, pacing card reveals in `blackjack.txt`, etc.
 
+### Networking
+
+Minimal blocking TCP server primitives. File descriptors are small
+integers pushed on the stack; on failure an op pushes `-1` instead of
+halting (so Quill programs can branch on errors). `close`/`sock-close`
+closes either a socket or a file fd. A client disconnect mid-`sock-send`
+reports a short write rather than killing the server (`SIGPIPE` is ignored).
+
+| Codepoint | Quill | Stack effect |
+|---|---|---|
+| U+2065 | `sock-create` | `-- fd` (push listening socket, `-1` on failure) |
+| U+2066 | `sock-bind` | `fd port -- rc` (`0` ok, `-1` fail) |
+| U+2067 | `sock-listen` | `fd backlog -- rc` (`0` ok, `-1` fail) |
+| U+2068 | `sock-accept` | `fd -- cfd` (blocks; `-1` on failure) |
+| U+2069 | `sock-recv` | `fd buf len -- n` (bytes read into `mem[buf..]`, `0` = EOF, `-1` = error) |
+| U+206A | `sock-send` | `fd buf len -- n` (bytes sent from `mem[buf..]`) |
+| U+206B | `sock-close` / `close` / `file-close` | `fd -- rc` (`0` ok, `-1` fail) |
+
+### Filesystem
+
+Paths live in memory as byte arrays: `path_ptr` points at `mem[path_ptr..path_ptr+path_len)`, one byte per cell. `file-open` is read-only.
+
+| Codepoint | Quill | Stack effect |
+|---|---|---|
+| U+206C | `file-open` | `path_ptr path_len flags -- fd` (`flags` ignored, `-1` if missing) |
+| U+206D | `file-read` | `fd buf len -- n` (`0` = EOF, `-1` = error) |
+| U+206E | `file-stat` | `path_ptr path_len -- size` (`-1` missing, `-2` directory) |
+| U+206F | `dir-list` | `path_ptr path_len out_buf out_cap -- n` (newline-separated names, `/` suffix for dirs, sorted case-insensitively; `-1` on error) |
+
 ### Control flow
 
 | Codepoint | Name | Role |
@@ -236,7 +265,7 @@ and it already is.
 
 ## Runtime limits
 
-- **Steps:** 10,000,000 ops per run (`g_max_steps` in `src/vm.c` / `src/ink.h`, default `DEFAULT_MAX_STEPS`). Override at runtime: `ink run --steps 5000000 program.txt` or `--max-steps`.
+- **Steps:** 10,000,000 ops per run (`g_max_steps` in `src/vm.c` / `src/ink.h`, default `DEFAULT_MAX_STEPS`). Override at runtime: `ink run --steps 5000000 program.txt` or `--max-steps`. `--steps 0` disables the limit (needed for servers like `examples/quill/httpd.q`).
 - **Call depth:** 20,000 nested `call`s (`DEFAULT_MAX_DEPTH`). Override: `ink run --depth 1000 program.txt`.
 - **Memory:** heap-grown (`g_mem`), doubled as needed, zero-filled.
 - **I/O:** `char-in` reads UTF-8 codepoints from stdin; `char-out`/`num-out`/`sleep`/`char-in` all `fflush(stdout)` before blocking/sleeping.
@@ -452,6 +481,17 @@ exist in Quill too:
 |---|---|---|
 | `rand`  | `n -- r` (uniform `0 <= r < n`) | `U+2063` |
 | `sleep` | `ms --` (pause) | `U+200F` |
+| `sock-create` | `-- fd` | `U+2065` |
+| `sock-bind`   | `fd port -- rc` | `U+2066` |
+| `sock-listen` | `fd backlog -- rc` | `U+2067` |
+| `sock-accept` | `fd -- cfd` | `U+2068` |
+| `sock-recv`   | `fd buf len -- n` | `U+2069` |
+| `sock-send`   | `fd buf len -- n` | `U+206A` |
+| `sock-close` / `close` / `file-close` | `fd -- rc` | `U+206B` |
+| `file-open` | `path_ptr path_len flags -- fd` | `U+206C` |
+| `file-read` | `fd buf len -- n` | `U+206D` |
+| `file-stat` | `path_ptr path_len -- size \| -1 \| -2` | `U+206E` |
+| `dir-list`  | `path_ptr path_len out_buf out_cap -- n` | `U+206F` |
 
 `store`/`load` above already cover `U+2064` / `U+200E`.
 
@@ -539,7 +579,7 @@ it anyway.
 
 ## IDE
 
-The bundled editor (`src/editor.c`, built into the single `ink` binary) renders each spec codepoint as a 2-letter glyph (`it`/`nb`/`fg`/`th`/`ha`/`d0`/`d1`/`id`/`pu`/`mm`/`en`/`em`/`tp`/`nj`/`zj`/`wj`/`fa`/`ls`/`ps`/`zs`/`bo`/`is`/`ip`/`lr`/`rl`/`sh`) so invisible ops are visible. `Ctrl-K` + two letters inserts the corresponding codepoint; `Ctrl-G` shows the full legend. All 26 current spec codepoints are covered, including `is` (rand), `ip` (store), `lr` (load), `rl` (sleep), `sh` (soft hyphen).
+The bundled editor (`src/editor.c`, built into the single `ink` binary) renders each spec codepoint as a 2-letter glyph (`it`/`nb`/`fg`/`th`/`ha`/`d0`/`d1`/`id`/`pu`/`mm`/`en`/`em`/`tp`/`nj`/`zj`/`wj`/`fa`/`ls`/`ps`/`zs`/`bo`/`is`/`ip`/`lr`/`rl`/`sh`/`sc`/`sb`/`sl`/`sa`/`sr`/`ss`/`sx`/`fo`/`fr`/`fs`/`dl`) so invisible ops are visible. `Ctrl-K` + two letters inserts the corresponding codepoint; `Ctrl-G` shows the full legend. All 37 current spec codepoints are covered, including `is` (rand), `ip` (store), `lr` (load), `rl` (sleep), `sh` (soft hyphen), plus `sc`/`sb`/`sl`/`sa`/`sr`/`ss`/`sx` (sockets) and `fo`/`fr`/`fs`/`dl` (files).
 
 Launch via the unified CLI:
 
@@ -573,6 +613,17 @@ Build is modular: `make` compiles `src/*.c` → `src/ink` (still a single binary
 | U+2064 | INVISIBLE PLUS | `store` (`addr value --`) |
 | U+200E | LEFT-TO-RIGHT MARK | `load` (`addr -- value`) |
 | U+200F | RIGHT-TO-LEFT MARK | `sleep` (`ms --`) |
+| U+2065 | NEXT LINE | `sock-create` (`-- fd`) |
+| U+2066 | LEFT-TO-RIGHT ISOLATE | `sock-bind` (`fd port -- rc`) |
+| U+2067 | RIGHT-TO-LEFT ISOLATE | `sock-listen` (`fd backlog -- rc`) |
+| U+2068 | FIRST STRONG ISOLATE | `sock-accept` (`fd -- cfd`) |
+| U+2069 | POP DIRECTIONAL ISOLATE | `sock-recv` (`fd buf len -- n`) |
+| U+206A | INHIBIT SYMMETRIC SWAPPING | `sock-send` (`fd buf len -- n`) |
+| U+206B | ACTIVATE SYMMETRIC SWAPPING | `sock-close` (`fd -- rc`) |
+| U+206C | INHIBIT ARABIC FORM SHAPING | `file-open` (`path_ptr path_len flags -- fd`) |
+| U+206D | ACTIVATE ARABIC FORM SHAPING | `file-read` (`fd buf len -- n`) |
+| U+206E | NATIONAL DIGIT SHAPES | `file-stat` (`path_ptr path_len -- size/-1/-2`) |
+| U+206F | NOMINAL DIGIT SHAPES | `dir-list` (`path_ptr path_len out_buf out_cap -- n`) |
 | U+00AD | SOFT HYPHEN | literal terminator + `char-out` |
 | U+2002 | EN SPACE | arity: negate / subtract / modulo |
 | U+2003 | EM SPACE | arity: identity / add / divide |

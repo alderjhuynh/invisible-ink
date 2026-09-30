@@ -65,7 +65,7 @@ void print_help_run(const char *prog){
         "  <file>                  UTF-8 file containing Invisible Ink (cover text allowed)\n"
         "\n"
         "Options:\n"
-        "  --steps <N>             Override step limit (default %lu)\n"
+        "  --steps <N>             Override step limit (default %lu, 0 = unlimited)\n"
         "  --max-steps <N>         Same as --steps\n"
         "  --depth <N>             Override max call depth (default %d)\n"
         "  --max-depth <N>         Same as --depth\n"

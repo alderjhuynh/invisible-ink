@@ -116,6 +116,17 @@ Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at_zwj) {
             case CP_INV_PLUS:block_push(blk, OP_STORE);  i++; break;
             case CP_LRM:    block_push(blk, OP_LOAD);    i++; break;
             case CP_RLM:    block_push(blk, OP_SLEEP);   i++; break;
+            case CP_SOCK_CREATE: block_push(blk, OP_SOCK_CREATE); i++; break;
+            case CP_SOCK_BIND:   block_push(blk, OP_SOCK_BIND);   i++; break;
+            case CP_SOCK_LISTEN: block_push(blk, OP_SOCK_LISTEN); i++; break;
+            case CP_SOCK_ACCEPT: block_push(blk, OP_SOCK_ACCEPT); i++; break;
+            case CP_SOCK_RECV:   block_push(blk, OP_SOCK_RECV);   i++; break;
+            case CP_SOCK_SEND:   block_push(blk, OP_SOCK_SEND);   i++; break;
+            case CP_SOCK_CLOSE:  block_push(blk, OP_SOCK_CLOSE);  i++; break;
+            case CP_FILE_OPEN:   block_push(blk, OP_FILE_OPEN);   i++; break;
+            case CP_FILE_READ:   block_push(blk, OP_FILE_READ);   i++; break;
+            case CP_FILE_STAT:   block_push(blk, OP_FILE_STAT);   i++; break;
+            case CP_DIR_LIST:    block_push(blk, OP_DIR_LIST);    i++; break;
             case CP_SOFT:    i++; break;
             case CP_ZWJ:    i++; break;
             case CP_ZWNJ:   i++; break;
