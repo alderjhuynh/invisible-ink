@@ -26,6 +26,7 @@ int main(int argc, char **argv) {
             else if(strcmp(sub,"embed")==0||strcmp(sub,"em")==0) print_help_embed(prog);
             else if(strcmp(sub,"edit")==0||strcmp(sub,"ide")==0||strcmp(sub,"ed")==0) print_help_edit(prog);
             else if(strcmp(sub,"check")==0) print_help_check(prog);
+            else if(strcmp(sub,"scc")==0||strcmp(sub,"scribe")==0) print_help_scc(prog);
             else if(strcmp(sub,"version")==0) fprintf(stderr,"ink %s\n",INK_VERSION);
             else { fprintf(stderr,"unknown help topic '%s'\n", sub); print_global_usage(prog); return 2; }
             return 0;
@@ -42,7 +43,7 @@ int main(int argc, char **argv) {
         return do_dump(argv[2]);
     }
     
-    const char *known[] = {"run","r","check","dump","disassemble","disasm","decompile","d","assemble","asm","compile","build","c","embed","em","edit","ide","ed","help","version",NULL};
+    const char *known[] = {"run","r","check","dump","disassemble","disasm","decompile","d","assemble","asm","compile","build","c","scc","scribe","embed","em","edit","ide","ed","help","version",NULL};
     bool is_known=false;
     for(int i=0;known[i];i++) if(strcmp(argv[1],known[i])==0){ is_known=true; break; }
     if(!is_known){
@@ -145,6 +146,10 @@ int main(int argc, char **argv) {
         return do_check(file);
     }
 
+    if(strcmp(cmd,"scc")==0||strcmp(cmd,"scribe")==0){
+        return scc_main(argc-1, argv+1);
+    }
+
     if(strcmp(cmd,"embed")==0||strcmp(cmd,"em")==0){
         const char *input=NULL; const char *output=NULL; const char *prose_file=NULL; const char *prose_text=NULL;
         bool wrap=false; long interval=0;
@@ -188,6 +193,7 @@ int main(int argc, char **argv) {
             else if(strcmp(sub,"embed")==0||strcmp(sub,"em")==0) print_help_embed(prog);
             else if(strcmp(sub,"edit")==0||strcmp(sub,"ide")==0) print_help_edit(prog);
             else if(strcmp(sub,"check")==0) print_help_check(prog);
+            else if(strcmp(sub,"scc")==0||strcmp(sub,"scribe")==0) print_help_scc(prog);
             else { fprintf(stderr,"unknown help topic '%s'\n", sub); return 2; }
             return 0;
         }

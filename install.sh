@@ -24,7 +24,7 @@ sudo chmod +x "${INSTALL_DIR}/ink"
 
 popd > /dev/null
 
-echo "Installing 'inkide' compatibility shim to ${INSTALL_DIR}/inkide (forwards to 'ink edit')..."
+echo "Installing 'inkide' compatibility shim to ${INSTALL_DIR}/inkide..."
 sudo tee "${INSTALL_DIR}/inkide" > /dev/null <<'EOS'
 #!/usr/bin/env bash
 # Compatibility shim: editor is now built into `ink`
@@ -55,9 +55,9 @@ echo "  ink run <file>              — run a program"
 echo "  ink dump <file>             — dump AST"
 echo "  ink disassemble <file>      — Invisible Ink -> Quill"
 echo "  ink assemble <file>         — Quill -> Invisible Ink"
+echo "  ink scc <file.s> [-o out.q] — Scribe -> Quill"
 echo "  ink check <file>            — validate without running"
 echo "  ink edit [file]             — launch visual editor (alias: ink ide)"
 echo "  ink help / ink version      — help / version"
 echo "  ink <file>                  — legacy run (still works)"
 echo "'quill' shim still installed for compatibility (deprecated)."
-echo "'inkide'/'InkIDE' now shims to 'ink edit'."

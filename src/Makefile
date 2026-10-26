@@ -2,7 +2,7 @@ CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -O2
 CFLAGS += -D_POSIX_C_SOURCE=200809L
 
-SRCS := util.c parse.c vm.c quill.c editor.c cli.c main.c
+SRCS := util.c parse.c vm.c quill.c editor.c cli.c main.c scc.c
 OBJS := $(SRCS:.c=.o)
 
 all: ink

@@ -13,7 +13,7 @@ Block *block_new(void) {
 }
 void block_free(Block *b){
     if(!b) return;
-    for(size_t i=0;i<b->count;i++) if(b->items[i].op==OP_IF){ block_free(b->items[i].then_blk); block_free(b->items[i].else_blk); }
+    for(size_t i=0;i<b->count;i++) if(b->items[i].op==OP_IF || b->items[i].op==OP_LOOP){ block_free(b->items[i].then_blk); block_free(b->items[i].else_blk); }
     free(b->items); free(b);
 }
 
@@ -94,6 +94,25 @@ Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at_zwj) {
             continue;
         }
 
+        if (ch == CP_ALM) {
+            i++;
+            if (i >= len || cps[i] != CP_ZWNJ) parse_error("expected condition block after WHILE", i);
+            i++;
+            size_t p = i;
+            Block *cond_b = parse_block(cps, len, &p, true);
+            i = p;
+            if (i >= len || cps[i] != CP_ZWNJ)
+                parse_error("expected loop body block after WHILE condition", i);
+            i++;
+            p = i;
+            Block *body_b = parse_block(cps, len, &p, true);
+            i = p;
+            Instr *ins = block_push(blk, OP_LOOP);
+            ins->then_blk = cond_b;   /* condition, re-evaluated every iteration */
+            ins->else_blk = body_b;   /* body, runs while condition holds */
+            continue;
+        }
+
         if (ch == CP_EN || ch == CP_EM || ch == CP_THREE) {
             int count = 1;
             while (i + (size_t)count < len && cps[i + (size_t)count] == ch && count < 3) count++;
@@ -117,6 +136,11 @@ Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at_zwj) {
             case CP_LRM:    block_push(blk, OP_LOAD);    i++; break;
             case CP_RLM:    block_push(blk, OP_SLEEP);   i++; break;
             case CP_SOCK_CREATE: block_push(blk, OP_SOCK_CREATE); i++; break;
+            case CP_LRE:    block_push(blk, OP_AND);     i++; break;
+            case CP_RLE:    block_push(blk, OP_OR);      i++; break;
+            case CP_PDF:    block_push(blk, OP_XOR);     i++; break;
+            case CP_LRO:    block_push(blk, OP_SHL);     i++; break;
+            case CP_RLO:    block_push(blk, OP_SHR);     i++; break;
             case CP_SOCK_BIND:   block_push(blk, OP_SOCK_BIND);   i++; break;
             case CP_SOCK_LISTEN: block_push(blk, OP_SOCK_LISTEN); i++; break;
             case CP_SOCK_ACCEPT: block_push(blk, OP_SOCK_ACCEPT); i++; break;

@@ -77,9 +77,9 @@ An Invisible Ink source consists of one or more **words**, separated by
 - Within a word, `U+2000 EN QUAD` marks statement boundaries (and also
   closes literals).
 
-Recursion plus `if/then/else` is the language's only control-flow primitive;
-combined with word calls (below), that's enough for arbitrary loops without a
-dedicated loop construct.
+Recursion plus `if/then/else` plus the native `while` (see *Control flow*) are
+the control-flow primitives; combined with word calls (below) that's enough
+for arbitrary iteration.
 
 ---
 
@@ -107,6 +107,20 @@ repeats in a row (1×, 2×, or 3×). Each row is a coherent little family:
 
 Negative literals aren't a separate syntax: push the unsigned value, then apply
 EN SPACE at arity 1 (`negate`).
+
+### Bitwise and shifts (ISA v2)
+
+Five plain bitwise ops, all two-operand, word-wise on the unsigned 64-bit
+pattern. Shift counts are taken mod 64 (`count & 63`), and `shr` is a **logical**
+(shift-in-zero) right shift, never sign-extending:
+
+| Codepoint | Name | Op | Stack effect |
+|---|---|---|---|
+| U+202A | LEFT-TO-RIGHT EMBEDDING | `and` | `a b -- a&b` |
+| U+202B | RIGHT-TO-LEFT EMBEDDING | `or` | `a b -- a\|b` |
+| U+202C | POP DIRECTIONAL FORMATTING | `xor` | `a b -- a^b` |
+| U+202D | LEFT-TO-RIGHT OVERRIDE | `shl` | `a b -- a << (b & 63)` |
+| U+202E | RIGHT-TO-LEFT OVERRIDE | `shr` | `a b -- logical (a >> b) on uint64` |
 
 ### Literals
 
@@ -222,10 +236,24 @@ Paths live in memory as byte arrays: `path_ptr` points at `mem[path_ptr..path_pt
 | U+200D | ZERO WIDTH JOINER | block close |
 | U+2060 | WORD JOINER | `if` / `then` / `else` (see below) |
 | U+2061 | FUNCTION APPLICATION | `call` - pop `n`, run word `n`, return here when it finishes |
+| U+061C | ARABIC LETTER MARK | `while` (see below) |
 | U+2000 | EN QUAD | statement boundary |
 | U+2001 | EM QUAD | word definition boundary |
 | U+200B | ZERO WIDTH SPACE | program terminator |
 | U+FEFF | ZERO WIDTH NO-BREAK SPACE | begin embedded program (see *Embedding*) |
+
+**`while` grammar:** `ARABIC LETTER MARK` is followed by two
+`ZWNJ ... ZWJ` blocks: a *condition* block and a *body* block. Repeat:
+execute the condition block, pop its result, run the body block while the
+result is truthy; a falsy result exits the loop. The condition block must
+leave exactly one value on the stack (an empty condition is a stack
+underflow error). Unlike `call`-based looping, a `while` loop **consumes
+no call depth** — iterations don't stack frames, so you can loop
+indefinitely under the 20,000-deep limit. The step limit still bounds
+runaway loops as always.
+
+Quill syntax (identical shape, readable):
+`while { <cond> } { <body> }`.
 
 **`if`/`then`/`else` grammar:** `WORD JOINER` pops `cond`, then runs the next
 `ZWNJ ... ZWJ` block if `cond` is truthy. If that block is *immediately*
@@ -250,12 +278,13 @@ and it already is.
 
 **Halt-on-error**, matching original Whitespace. Any of the following halts the program immediately with a runtime error (exit 1, message on stderr):
 
-- stack underflow (`dup`/`swap`/`drop`/`rot`/arity ops/`call`/`if`/`num-out`/`char-out`/`rand`/`store`/`load`/`sleep` needing a value that isn't there)
+- stack underflow (`dup`/`swap`/`drop`/`rot`/arity ops/`call`/`if`/`while`/`num-out`/`char-out`/`rand`/`store`/`load`/`sleep` needing a value that isn't there)
 - divide-by-zero or modulo-by-zero
 - malformed literal (empty, or unterminated; not closed by `EN QUAD` or `SOFT HYPHEN`)
 - `rand` with `n <= 0`
 - `store`/`load` with negative address
-- `call` to undefined word (index `< 0` or `>= word count`)
+- call to undefined word (index `< 0` or `>= word count`)
+- a `while` condition block that doesn't leave a value (stack underflow)
 - call depth exceeded (recursion > 20,000)
 - step limit exceeded (10,000,000 instructions, guards against infinite loops)
 
@@ -297,7 +326,8 @@ quill assemble program.q -o program.txt   # deprecated, forwards to ink
 quill disassemble program.txt
 ```
 
-Examples in `examples/quill/` (`add.q`, `fib.q`, `countdown.q`, `echo.q`).
+Examples in `examples/quill/` (`add.q`, `fib.q`, `countdown.q`,
+`countdown-while.q`, `echo.q`, `bitops.q`).
 
 ### Lexical structure
 
@@ -306,7 +336,7 @@ Examples in `examples/quill/` (`add.q`, `fib.q`, `countdown.q`, `echo.q`).
   entirely and never affect emitted output.
 - Identifiers (word names, memory slot names): `[a-zA-Z_][a-zA-Z0-9_-]*`.
 - Integer literals: an optional `-`, then one or more decimal digits.
-- Keywords: `word`, `if`, `else`, `let`, `call`, `halt`, and the op
+- Keywords: `word`, `if`, `else`, `while`, `let`, `call`, `halt`, and the op
   mnemonics in the tables below, are reserved and cannot be used as identifiers.
 - `{` and `}` delimit `if`/`else` blocks only.
 
@@ -356,6 +386,11 @@ mnemonics:
 | `sign` | `a -- sgn(a)` | `U+2004` ×1 |
 | `mul`  | `a b -- a*b`  | `U+2004` ×2 |
 | `pow`  | `a b -- a^b`  | `U+2004` ×3 |
+| `and`  | `a b -- a&b`  | `U+202A` ×1 |
+| `or`   | `a b -- a\|b` | `U+202B` ×1 |
+| `xor`  | `a b -- a^b`  | `U+202C` ×1 |
+| `shl`  | `a b -- a << (b & 63)` | `U+202D` ×1 |
+| `shr`  | `a b -- (uint64)logical a >> (b & 63)` | `U+202E` ×1 |
 
 **Negative literals** are not a separate literal form: `push -5`
 assembles to `push 5` immediately followed by `neg`.
@@ -402,6 +437,43 @@ if {
 Compiles directly to `U+2060 WORD JOINER`, `U+200C ZWNJ ... U+200D ZWJ`,
 optionally followed by a second `U+200C ZWNJ ... U+200D ZWJ`.
 
+#### `while`
+
+```
+while {
+    <condition statements, must leave one value on the stack>
+} {
+    <body statements>
+}
+```
+
+Compiles to `U+061C ARABIC LETTER MARK`, `U+200C ZWNJ ... U+200D ZWJ`
+(condition), then `U+200C ZWNJ ... U+200D ZWJ` (body). Infinite loops are legal (`while { push 1 } { ... }`) but bounded by the
+step limit unless the limit is disabled with `--steps 0`.
+
+The two-block form maps one-to-one onto the `if`/`else` block pair grammar:
+`while` is `if` where the first block is re-evaluated every round and the
+second block repeats instead of running once.
+
+```
+word main
+    let i = 0
+    push 5
+    store i
+    while {
+        load i
+    } {
+        load i
+        num-out
+        push 10
+        char-out
+        load i
+        push 1
+        sub
+        store i
+    }
+```
+
 #### `call`
 
 ```
@@ -423,8 +495,9 @@ Emits `U+200B ZERO WIDTH SPACE`, terminating the program immediately.
 
 #### Recursion
 
-Like in Ink, there is no dedicated loop construct: a word
-that `call`s itself, guarded by an `if`, is the only iteration mechanism.
+The classic pre-`while` iteration mechanism still works: a word
+that `call`s itself, guarded by an `if`. Prefer `while` for plain loops —
+it uses no call depth; heavy recursion hits the 20,000-deep limit and halts.
 
 ```
 word countdown          ; ( n -- )
@@ -541,6 +614,102 @@ word loop               ; ( count -- )
 
 ---
 
+## Scribe
+
+**Scribe is a high level language that compiles to Quill.** 
+you can think of it like this: If Quill is assembly, Scribe is its C counterpart. 
+
+```sh
+ink scc program.s -o program.q        # Scribe -> Quill
+ink asm program.q -o program.txt      # Quill -> Invisible Ink
+ink run program.txt                   # run it
+```
+
+### Program shape and grammar
+
+A program is a sequence of declarations, in any order (functions may call
+functions defined later):
+
+```
+<global-decl>  := "let" NAME ["[" <int> "]"] ["=" <expr>] ";"
+<fn-decl>      := "fn" NAME "(" [ NAME ["," NAME]* ] ")" "{" <stmt>* "}"
+<stmt>         := "let" NAME [ "[" <int> "]" ] ["=" <expr>] ";"   ; local
+               |  NAME "=" <expr> ";" |  NAME "[" <expr> "]" "=" <expr> ";"
+               |  "if" "(" <expr> ")" "{" <stmt>* "}"
+               |    [ "else" "{" <stmt>* "}" ]
+               |  "while" "(" <expr> ")" "{" <stmt>* "}"
+               |  "for" "(" <stmt> ";" <expr> ";" <stmt> ")" "{" <stmt>* "}"
+               |  "return" [<expr>] ";"
+               |  <builtin-call> ";"
+               |  <expr> ";"                     ; e.g. a call for side effects
+<expr>         := || / && / | ^ & / == != / < > <= >= / << >> / + - / * / %
+                  unary - and ! / calls / peek(...) / literals / names / a[i]
+```
+
+`main` is required and takes zero arguments (arity is checked after the whole
+file parses, so definition order doesn't matter).
+
+### Builtins
+
+| Scribe call | Meaning |
+|---|---|
+| `putc(n);` | print codepoint `n` |
+| `putn(n);` | print `n` in decimal |
+| `getc()` | read one codepoint, `-1` on EOF |
+| `peek(a)` | read `mem[a]` |
+| `poke(a, v);` | write `mem[a] = v` |
+| `rnd(n)` | random integer in `[0, n)` |
+| `sleep(ms);` | pause `ms` milliseconds |
+| `exit();` | halt the program |
+
+### Memory model
+
+A Scribe program compiles to this Quill memory layout:
+
+```
+mem[0]      SP   dynamic stack pointer (top = end of the current frame)
+mem[1]      FP   base of the current frame; frames are laid:
+                 B+0        saved caller FP
+                 B+1..N     args (slot 1 = first arg)
+                 B+N..      locals (arrays take one cell per element)
+                 B+ROFF     result slot (value rides out on the Quill stack)
+                 B+DROFF    done flag (early-return control flow)
+mem[2..]    globals, in declaration order; each array element = one cell
+```
+
+Function arguments live at `B+1` onward and locals right after them, so
+addresses of locals are `FP + off` at runtime, while global addresses compile
+to constants.
+
+### Loops:
+
+`while`/`for` compile to the ISA's native `while` op (`while { cond } {
+body }`, two structured blocks). The condition block re-evaluates every
+iteration, **costing zero call depth and emitting no hidden words**. A
+million-iteration loop runs under the same 20,000-deep limit as any
+straight-line program. In functions with early returns, the `done` flag is
+checked inside the condition block, so a `return` fired mid-body exits the
+loop on the next condition check. Visible when you `ink disassemble` a
+compiled program: loops appear plainly as `while { ... } { ... }`.
+
+Functions with early returns get a hidden `done` flag in their frame plus a
+guard: when a `return` fires mid-body, any remaining statements in the block
+(including nested blocks) are skipped. In such functions, `while` conditions
+also test `done`, so a `return` from inside a loop body leaves the loop
+cleanly on the next condition check.
+
+### limitations
+
+- `int64` only: no narrower/unsigned types, no casts, no floats.
+- Arrays: one flat block, `base + i` addressing, length must be a literal,
+  no initializers, no bounds checks at runtime.
+- `&&`/`||` eager; no `break`/`continue` (restructure with flags or returns);
+  no strings, no structs, no `~`, no `++`/`--`, no function pointers, no macros.
+- Value builtins (`getc`, `peek`, `rnd`) work in expressions only; void
+  builtins (`putc`, `putn`, `poke`, `sleep`, `exit`) work as statements only.
+
+---
+
 ## Normalization policy
 
 Several codepoints in this spec, `NBSP`, `EN/EM/THREE-PER-EM/FOUR-PER-EM/
@@ -579,7 +748,7 @@ it anyway.
 
 ## IDE
 
-The bundled editor (`src/editor.c`, built into the single `ink` binary) renders each spec codepoint as a 2-letter glyph (`it`/`nb`/`fg`/`th`/`ha`/`d0`/`d1`/`id`/`pu`/`mm`/`en`/`em`/`tp`/`nj`/`zj`/`wj`/`fa`/`ls`/`ps`/`zs`/`bo`/`is`/`ip`/`lr`/`rl`/`sh`/`sc`/`sb`/`sl`/`sa`/`sr`/`ss`/`sx`/`fo`/`fr`/`fs`/`dl`) so invisible ops are visible. `Ctrl-K` + two letters inserts the corresponding codepoint; `Ctrl-G` shows the full legend. All 37 current spec codepoints are covered, including `is` (rand), `ip` (store), `lr` (load), `rl` (sleep), `sh` (soft hyphen), plus `sc`/`sb`/`sl`/`sa`/`sr`/`ss`/`sx` (sockets) and `fo`/`fr`/`fs`/`dl` (files).
+The bundled editor (`src/editor.c`, built into the single `ink` binary) renders each spec codepoint as a 2-letter glyph (`it`/`nb`/`fg`/`th`/`ha`/`d0`/`d1`/`id`/`pu`/`mm`/`en`/`em`/`tp`/`nj`/`zj`/`wj`/`fa`/`lm`/`ls`/`ps`/`zs`/`bo`/`is`/`ip`/`lr`/`rl`/`sh`/`sc`/`sb`/`sl`/`sa`/`sr`/`ss`/`sx`/`fo`/`fr`/`fs`/`dl`/`an`/`or`/`xo`/`hl`/`hr`) so invisible ops are visible. `Ctrl-K` + two letters inserts the corresponding codepoint; `Ctrl-G` shows the full legend. All 43 current spec codepoints are covered, including `is` (rand), `ip` (store), `lr` (load), `rl` (sleep), `sh` (soft hyphen), `lm` (while), plus `sc`/`sb`/`sl`/`sa`/`sr`/`ss`/`sx` (sockets), `fo`/`fr`/`fs`/`dl` (files), and `an`/`or`/`xo`/`hl`/`hr` (ISA v2 bitwise: and/or/xor/shl/shr).
 
 Launch via the unified CLI:
 
@@ -624,6 +793,7 @@ Build is modular: `make` compiles `src/*.c` → `src/ink` (still a single binary
 | U+206D | ACTIVATE ARABIC FORM SHAPING | `file-read` (`fd buf len -- n`) |
 | U+206E | NATIONAL DIGIT SHAPES | `file-stat` (`path_ptr path_len -- size/-1/-2`) |
 | U+206F | NOMINAL DIGIT SHAPES | `dir-list` (`path_ptr path_len out_buf out_cap -- n`) |
+| U+061C | ARABIC LETTER MARK | `while` (`cond` block + `body` block, see Control flow) |
 | U+00AD | SOFT HYPHEN | literal terminator + `char-out` |
 | U+2002 | EN SPACE | arity: negate / subtract / modulo |
 | U+2003 | EM SPACE | arity: identity / add / divide |
@@ -636,3 +806,8 @@ Build is modular: `make` compiles `src/*.c` → `src/ink` (still a single binary
 | U+2001 | EM QUAD | word definition boundary |
 | U+200B | ZERO WIDTH SPACE | program terminator |
 | U+FEFF | ZERO WIDTH NO-BREAK SPACE | begin embedded program |
+| U+202A | LEFT-TO-RIGHT EMBEDDING | `and` (`a b -- a&b`) |
+| U+202B | RIGHT-TO-LEFT EMBEDDING | `or` (`a b -- a\|b`) |
+| U+202C | POP DIRECTIONAL FORMATTING | `xor` (`a b -- a^b`) |
+| U+202D | LEFT-TO-RIGHT OVERRIDE | `shl` (`a b -- a << (b&63)`) |
+| U+202E | RIGHT-TO-LEFT OVERRIDE | `shr` (`a b -- (uint64)a >> (b&63)`) |

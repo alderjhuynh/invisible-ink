@@ -18,11 +18,11 @@ static void disasm_block(Block *blk, int indent) {
         printf("%*s%s", indent, "", op_name(ins->op));
         if (ins->op == OP_PUSH) printf(" %lld", (long long)ins->value);
         printf("\n");
-        if (ins->op == OP_IF) {
-            printf("%*sthen:\n", indent + 2, "");
+        if (ins->op == OP_IF || ins->op == OP_LOOP) {
+            printf("%*s%s:\n", indent + 2, "", ins->op == OP_LOOP ? "cond" : "then");
             disasm_block(ins->then_blk, indent + 4);
             if (ins->else_blk) {
-                printf("%*selse:\n", indent + 2, "");
+                printf("%*s%s:\n", indent + 2, "", ins->op == OP_LOOP ? "body" : "else");
                 disasm_block(ins->else_blk, indent + 4);
             }
         }
@@ -31,7 +31,7 @@ static void disasm_block(Block *blk, int indent) {
 
 void print_global_usage(const char *prog){
     fprintf(stderr,
-        "ink %s — Invisible Ink\n"
+        "ink %s - Invisible Ink\n"
         "\n"
         "Usage:\n"
         "  %s <command> [options] [args]\n"
@@ -43,6 +43,7 @@ void print_global_usage(const char *prog){
         "  dump         Dump parsed AST (internal disassembler, \"word N:\" style)\n"
         "  disassemble  Disassemble Invisible Ink to Quill (aliases: disasm, decompile)\n"
         "  assemble     Assemble Quill to Invisible Ink (aliases: asm, compile, build)\n"
+        "  scc          Compile Scribe (*.s) to Quill (*.q) (alias: scribe)\n"
         "  embed        Compile Quill and embed/thread into cover prose\n"
         "  edit         Launch InkIDE visual editor (alias: ide)\n"
         "  help         Show help for a command\n"
@@ -167,6 +168,25 @@ void print_help_embed(const char *prog){
         "  %s embed prog.q -o hidden.txt --text \"Hello world, this is cover.\"\n"
         "  %s embed prog.q -o hidden.txt --prose cover.txt --wrap\n",
         prog, prog, prog, prog, prog, prog, prog);
+}
+
+void print_help_scc(const char *prog){
+    fprintf(stderr,
+        "Usage: %s scc [-o <out.q>] <file.s>\n"
+        "\n"
+        "  Compile Scribe to Quill assembly.\n"
+        "\n"
+        "Arguments:\n"
+        "  <file.s>                  Scribe source file\n"
+        "\n"
+        "Options:\n"
+        "  -o, --output <file>       Write Quill to file (default: stdout)\n"
+        "  -h, --help                Show this help\n"
+        "\n"
+        "Examples:\n"
+        "  %s scc fib.s -o fib.q\n"
+        "  %s scc program.s -o program.q && %s asm program.q -o program.txt\n",
+        prog, prog, prog, prog);
 }
 
 int do_run(const char *path, bool do_stats){

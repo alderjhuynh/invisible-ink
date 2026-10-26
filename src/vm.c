@@ -174,6 +174,31 @@ static void exec_instr(Instr *ins, int depth) {
         case OP_NUMOUT: { int64_t a = pop(); printf("%lld", (long long)a); break; }
         case OP_CHAROUT:{ int64_t a = pop(); utf8_put(a); break; }
         case OP_CHARIN: fflush(stdout); push(utf8_get_stdin()); break;
+        case OP_AND: {
+            int64_t b = pop(), a = pop();
+            push((int64_t)((uint64_t)a & (uint64_t)b));
+            break;
+        }
+        case OP_OR: {
+            int64_t b = pop(), a = pop();
+            push((int64_t)((uint64_t)a | (uint64_t)b));
+            break;
+        }
+        case OP_XOR: {
+            int64_t b = pop(), a = pop();
+            push((int64_t)((uint64_t)a ^ (uint64_t)b));
+            break;
+        }
+        case OP_SHL: {
+            int64_t b = pop(), a = pop();
+            push((int64_t)((uint64_t)a << (uint64_t)(b & 63)));
+            break;
+        }
+        case OP_SHR: {
+            int64_t b = pop(), a = pop();
+            push((int64_t)((uint64_t)a >> (uint64_t)(b & 63)));
+            break;
+        }
         case OP_RAND: {
             int64_t n = pop();
             if (n <= 0) vm_error("invalid random range");
@@ -448,6 +473,18 @@ static void exec_instr(Instr *ins, int depth) {
             else if (ins->else_blk) exec_block(ins->else_blk, depth);
             break;
         }
+        case OP_LOOP: {
+            /* cond block must leave one value; falsy exits.
+               Steps are still counted per-instruction inside exec_block,
+               so the step limit bounds runaway loops. */
+            for (;;) {
+                exec_block(ins->then_blk, depth);
+                int64_t c = pop();
+                if (!c) break;
+                exec_block(ins->else_blk, depth);
+            }
+            break;
+        }
         case OP_HALT:
             g_outcome = OUT_HALT;
             longjmp(g_jmp, 1);
@@ -462,8 +499,10 @@ const char *op_name(OpCode op) {
         case OP_NEG: return "neg"; case OP_SUB: return "sub"; case OP_MOD: return "mod";
         case OP_ID: return "id"; case OP_ADD: return "add"; case OP_DIV: return "div";
         case OP_SIGN: return "sign"; case OP_MUL: return "mul"; case OP_POW: return "pow";
+        case OP_AND: return "and"; case OP_OR: return "or"; case OP_XOR: return "xor";
+        case OP_SHL: return "shl"; case OP_SHR: return "shr";
         case OP_NUMOUT: return "num-out"; case OP_CHAROUT: return "char-out"; case OP_CHARIN: return "char-in";
-        case OP_CALL: return "call"; case OP_IF: return "if"; case OP_HALT: return "halt";
+        case OP_CALL: return "call"; case OP_IF: return "if"; case OP_LOOP: return "while"; case OP_HALT: return "halt";
         case OP_RAND: return "rand"; case OP_STORE: return "store"; case OP_LOAD: return "load"; case OP_SLEEP: return "sleep";
         case OP_SOCK_CREATE: return "sock-create";
         case OP_SOCK_BIND: return "sock-bind";

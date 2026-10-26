@@ -54,6 +54,7 @@ static const SpecEntry SPEC_TABLE[] = {
     { 0x200D, "zj", "ZERO WIDTH JOINER",         "block close",          CAT_BLOCK   },
     { 0x2060, "wj", "WORD JOINER",               "if / then / else",     CAT_BLOCK   },
     { 0x2061, "fa", "FUNCTION APPLICATION",      "call",                 CAT_BLOCK   },
+    { 0x061C, "lm", "ARABIC LETTER MARK",        "while",                CAT_BLOCK   },
     { 0x2000, "ls", "EN QUAD",                   "statement boundary",   CAT_STRUCT  },
     { 0x2001, "ps", "EM QUAD",                   "word boundary",        CAT_STRUCT  },
     { 0x200B, "zs", "ZERO WIDTH SPACE",          "program terminator",   CAT_STRUCT  },
@@ -74,13 +75,17 @@ static const SpecEntry SPEC_TABLE[] = {
     { 0x206D, "fr", "ACTIVATE ARABIC FORM SHAPING","file-read",          CAT_IO      },
     { 0x206E, "fs", "NATIONAL DIGIT SHAPES",     "file-stat",            CAT_IO      },
     { 0x206F, "dl", "NOMINAL DIGIT SHAPES",      "dir-list",             CAT_IO      },
+    { 0x202A, "an", "LEFT-TO-RIGHT EMBEDDING",   "and",                  CAT_ARITH   },
+    { 0x202B, "or", "RIGHT-TO-LEFT EMBEDDING",   "or",                   CAT_ARITH   },
+    { 0x202C, "xo", "POP DIRECTIONAL FORMATTING","xor",                  CAT_ARITH   },
+    { 0x202D, "hl", "LEFT-TO-RIGHT OVERRIDE",    "shl",                  CAT_ARITH   },
+    { 0x202E, "hr", "RIGHT-TO-LEFT OVERRIDE",    "shr",                  CAT_ARITH   },
 };
 #define SPEC_COUNT (sizeof(SPEC_TABLE) / sizeof(SPEC_TABLE[0]))
 
 typedef struct { cp_t lo, hi; const char *name; } ConfusableRange;
 static const ConfusableRange CONFUSABLES[] = {
     { 0x180E, 0x180E, "MONGOLIAN VOWEL SEPARATOR"},
-    { 0x061C, 0x061C, "ARABIC LETTER MARK" },
     { 0x202F, 0x202F, "NARROW NO-BREAK SPACE" },
     { 0xFE00, 0xFE0F, "VARIATION SELECTOR" },
     { 0xFFF9, 0xFFFB, "INTERLINEAR ANNOTATION" },
@@ -1152,7 +1157,7 @@ int selftest_failures = 0;
 } while (0)
 
 void run_selftest(void) {
-    CHECK(SPEC_COUNT == 37, "spec table has all 37 codepoints");
+    CHECK(SPEC_COUNT == 43, "spec table has all 43 codepoints");
     bool all_roundtrip = true;
     for (size_t i = 0; i < SPEC_COUNT; i++) {
         const SpecEntry *s = &SPEC_TABLE[i];

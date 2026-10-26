@@ -41,7 +41,7 @@ static bool q_is_identifier(const char *tok){
     for(size_t i=1;tok[i];i++){ char c=tok[i]; if(!(isalnum((unsigned char)c)||c=='_'||c=='-')) return false; }
     return true;
 }
-static const char *Q_KEYWORDS[] = {"word","if","else","let","call","halt","push","dup","swap","drop","rot","neg","sub","mod","id","add","div","sign","mul","pow","num-out","char-out","char-in","rand","sleep","store","load","sock-create","sock-bind","sock-listen","sock-accept","sock-recv","sock-send","sock-close","close","file-open","file-read","file-stat","file-close","dir-list",NULL};
+static const char *Q_KEYWORDS[] = {"word","if","else","while","let","call","halt","push","dup","swap","drop","rot","neg","sub","mod","id","add","div","sign","mul","pow","and","or","xor","shl","shr","num-out","char-out","char-in","rand","sleep","store","load","sock-create","sock-bind","sock-listen","sock-accept","sock-recv","sock-send","sock-close","close","file-open","file-read","file-stat","file-close","dir-list",NULL};
 static bool q_is_keyword(const char *tok){ for(int i=0;Q_KEYWORDS[i];i++) if(strcmp(tok,Q_KEYWORDS[i])==0) return true; return false; }
 
 static bool q_tokenize(const char *src, size_t len, QTokenVec *out){
@@ -107,6 +107,11 @@ static bool q_mnemonic_to_cps_simple(const char *tok, QCpVec *out){
     if(strcmp(tok,"sign")==0){ q_cv_push(out,CP_THREE); return true; }
     if(strcmp(tok,"mul")==0){ q_cv_push(out,CP_THREE); q_cv_push(out,CP_THREE); return true; }
     if(strcmp(tok,"pow")==0){ q_cv_push(out,CP_THREE); q_cv_push(out,CP_THREE); q_cv_push(out,CP_THREE); return true; }
+    if(strcmp(tok,"and")==0){ q_cv_push(out,CP_LRE); return true; }
+    if(strcmp(tok,"or")==0){ q_cv_push(out,CP_RLE); return true; }
+    if(strcmp(tok,"xor")==0){ q_cv_push(out,CP_PDF); return true; }
+    if(strcmp(tok,"shl")==0){ q_cv_push(out,CP_LRO); return true; }
+    if(strcmp(tok,"shr")==0){ q_cv_push(out,CP_RLO); return true; }
     if(strcmp(tok,"num-out")==0){ q_cv_push(out,CP_IDEO); return true; }
     if(strcmp(tok,"char-out")==0){ q_cv_push(out,CP_PUNCT); return true; }
     if(strcmp(tok,"char-in")==0){ q_cv_push(out,CP_MEDMATH); return true; }
@@ -153,6 +158,20 @@ static bool q_emit_block(QEmitCtx *ctx, size_t *p_ptr){
                 p=sub2_p; q_cv_push(word_cps,CP_ZWJ);
             }
             q_cv_push(word_cps,CP_LS);
+        } else if(strcmp(tok,"while")==0){
+            p+=1;
+            if(p>=n||strcmp(body[p],"{")!=0){ q_set_error("expected '{' after 'while'"); return false; }
+            p+=1;
+            q_cv_push(word_cps,CP_ALM); q_cv_push(word_cps,CP_ZWNJ);
+            QEmitCtx sub=*ctx; size_t sub_p=p;
+            if(!q_emit_block(&sub,&sub_p)) return false;
+            p=sub_p; q_cv_push(word_cps,CP_ZWJ);
+            if(p>=n||strcmp(body[p],"{")!=0){ q_set_error("expected '{' loop body after 'while' condition (grammar: while { cond } { body })"); return false; }
+            p+=1; q_cv_push(word_cps,CP_ZWNJ);
+            QEmitCtx sub2=*ctx; size_t sub2_p=p;
+            if(!q_emit_block(&sub2,&sub2_p)) return false;
+            p=sub2_p; q_cv_push(word_cps,CP_ZWJ);
+            q_cv_push(word_cps,CP_LS);
         } else if(strcmp(tok,"else")==0){ q_set_error("unexpected 'else' without matching 'if'"); return false; }
         else if(strcmp(tok,"let")==0){
             if(p+1>=n){ q_set_error("let without name"); return false; }
@@ -170,7 +189,7 @@ static bool q_emit_block(QEmitCtx *ctx, size_t *p_ptr){
             int64_t val=atoll(body[p+1]);
             if(val<0){ q_encode_literal(word_cps,-val); q_cv_push(word_cps,CP_EN); q_cv_push(word_cps,CP_LS); } else q_encode_literal(word_cps,val);
             p+=2;
-        } else if(strcmp(tok,"dup")==0||strcmp(tok,"swap")==0||strcmp(tok,"drop")==0||strcmp(tok,"rot")==0||strcmp(tok,"neg")==0||strcmp(tok,"sub")==0||strcmp(tok,"mod")==0||strcmp(tok,"id")==0||strcmp(tok,"add")==0||strcmp(tok,"div")==0||strcmp(tok,"sign")==0||strcmp(tok,"mul")==0||strcmp(tok,"pow")==0||strcmp(tok,"num-out")==0||strcmp(tok,"char-out")==0||strcmp(tok,"char-in")==0||strcmp(tok,"rand")==0||strcmp(tok,"sleep")==0||strcmp(tok,"halt")==0||strcmp(tok,"load")==0||strcmp(tok,"store")==0||strcmp(tok,"call")==0||strcmp(tok,"sock-create")==0||strcmp(tok,"sock-bind")==0||strcmp(tok,"sock-listen")==0||strcmp(tok,"sock-accept")==0||strcmp(tok,"sock-recv")==0||strcmp(tok,"sock-send")==0||strcmp(tok,"sock-close")==0||strcmp(tok,"close")==0||strcmp(tok,"file-close")==0||strcmp(tok,"file-open")==0||strcmp(tok,"file-read")==0||strcmp(tok,"file-stat")==0||strcmp(tok,"dir-list")==0){
+        } else if(strcmp(tok,"dup")==0||strcmp(tok,"swap")==0||strcmp(tok,"drop")==0||strcmp(tok,"rot")==0||strcmp(tok,"neg")==0||strcmp(tok,"sub")==0||strcmp(tok,"mod")==0||strcmp(tok,"id")==0||strcmp(tok,"add")==0||strcmp(tok,"div")==0||strcmp(tok,"sign")==0||strcmp(tok,"mul")==0||strcmp(tok,"pow")==0||strcmp(tok,"and")==0||strcmp(tok,"or")==0||strcmp(tok,"xor")==0||strcmp(tok,"shl")==0||strcmp(tok,"shr")==0||strcmp(tok,"num-out")==0||strcmp(tok,"char-out")==0||strcmp(tok,"char-in")==0||strcmp(tok,"rand")==0||strcmp(tok,"sleep")==0||strcmp(tok,"halt")==0||strcmp(tok,"load")==0||strcmp(tok,"store")==0||strcmp(tok,"call")==0||strcmp(tok,"sock-create")==0||strcmp(tok,"sock-bind")==0||strcmp(tok,"sock-listen")==0||strcmp(tok,"sock-accept")==0||strcmp(tok,"sock-recv")==0||strcmp(tok,"sock-send")==0||strcmp(tok,"sock-close")==0||strcmp(tok,"close")==0||strcmp(tok,"file-close")==0||strcmp(tok,"file-open")==0||strcmp(tok,"file-read")==0||strcmp(tok,"file-stat")==0||strcmp(tok,"dir-list")==0){
             if(strcmp(tok,"halt")==0){ q_cv_push(word_cps,CP_ZWSP); p+=1; }
             else if(strcmp(tok,"call")==0){
                 if(p+1>=n){ q_set_error("call requires word name or index"); return false; }
@@ -292,12 +311,24 @@ static void sb_emit_block(SB *sb, Block *blk, int indent){
                 sb_append(sb,"}\n");
             }
             continue;
+        }
+        if(ins->op==OP_LOOP){
+            for(int k=0;k<indent;k++) sb_append(sb,"    ");
+            sb_append(sb,"while {\n");
+            sb_emit_block(sb, ins->then_blk, indent+1);
+            for(int k=0;k<indent;k++) sb_append(sb,"    ");
+            sb_append(sb,"} {\n");
+            sb_emit_block(sb, ins->else_blk, indent+1);
+            for(int k=0;k<indent;k++) sb_append(sb,"    ");
+            sb_append(sb,"}\n");
+            continue;
         } else {
             const char *mn=NULL;
             switch(ins->op){
                 case OP_DUP: mn="dup"; break; case OP_SWAP: mn="swap"; break; case OP_DROP: mn="drop"; break; case OP_ROT: mn="rot"; break;
                 case OP_NEG: mn="neg"; break; case OP_SUB: mn="sub"; break; case OP_MOD: mn="mod"; break;
                 case OP_ADD: mn="add"; break; case OP_DIV: mn="div"; break; case OP_SIGN: mn="sign"; break; case OP_MUL: mn="mul"; break; case OP_POW: mn="pow"; break;
+                case OP_AND: mn="and"; break; case OP_OR: mn="or"; break; case OP_XOR: mn="xor"; break; case OP_SHL: mn="shl"; break; case OP_SHR: mn="shr"; break;
                 case OP_NUMOUT: mn="num-out"; break; case OP_CHAROUT: mn="char-out"; break; case OP_CHARIN: mn="char-in"; break;
                 case OP_CALL: mn="call"; break; case OP_HALT: mn="halt"; break; case OP_RAND: mn="rand"; break; case OP_STORE: mn="store"; break; case OP_LOAD: mn="load"; break; case OP_SLEEP: mn="sleep"; break;
                 case OP_SOCK_CREATE: mn="sock-create"; break; case OP_SOCK_BIND: mn="sock-bind"; break; case OP_SOCK_LISTEN: mn="sock-listen"; break; case OP_SOCK_ACCEPT: mn="sock-accept"; break; case OP_SOCK_RECV: mn="sock-recv"; break; case OP_SOCK_SEND: mn="sock-send"; break; case OP_SOCK_CLOSE: mn="sock-close"; break;

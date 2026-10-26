@@ -10,6 +10,9 @@ void print_help_assemble(const char *prog);
 void print_help_edit(const char *prog);
 void print_help_check(const char *prog);
 void print_help_embed(const char *prog);
+void print_help_scc(const char *prog);
+
+int scc_main(int argc, char **argv);
 
 int do_run(const char *path, bool do_stats);
 int do_dump(const char *path);

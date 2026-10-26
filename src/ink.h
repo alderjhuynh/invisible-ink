@@ -6,7 +6,7 @@
 #include <stddef.h>
 #include <setjmp.h>
 
-#define INK_VERSION "1.2.0"
+#define INK_VERSION "1.3.0"
 
 typedef uint32_t cp_t;
 
@@ -38,6 +38,12 @@ enum {
     CP_LRM     = 0x200E,
     CP_RLM     = 0x200F,
     CP_SOFT    = 0x00AD,
+    /* isa v2: bitwise + shifts */
+    CP_LRE     = 0x202A,            /* and */
+    CP_RLE     = 0x202B,            /* or */
+    CP_PDF     = 0x202C,            /* xor */
+    CP_LRO     = 0x202D,            /* shl */
+    CP_RLO     = 0x202E,            /* shr */
     /* syscall extensions: socket + file */
     CP_SOCK_CREATE = 0x2065,
     CP_SOCK_BIND   = 0x2066,
@@ -49,15 +55,18 @@ enum {
     CP_FILE_OPEN   = 0x206C,
     CP_FILE_READ   = 0x206D,
     CP_FILE_STAT   = 0x206E,
-    CP_DIR_LIST    = 0x206F
+    CP_DIR_LIST    = 0x206F,
+    /* isa v3: loops */
+    CP_ALM = 0x061C                  /* ARABIC LETTER MARK: while */
 };
 
 /* opcode */
 typedef enum {
     OP_PUSH, OP_DUP, OP_SWAP, OP_DROP, OP_ROT,
     OP_NEG, OP_SUB, OP_MOD, OP_ID, OP_ADD, OP_DIV, OP_SIGN, OP_MUL, OP_POW,
+    OP_AND, OP_OR, OP_XOR, OP_SHL, OP_SHR,
     OP_NUMOUT, OP_CHAROUT, OP_CHARIN,
-    OP_CALL, OP_IF, OP_HALT,
+    OP_CALL, OP_IF, OP_LOOP, OP_HALT,
     OP_RAND, OP_STORE, OP_LOAD, OP_SLEEP,
     OP_SOCK_CREATE, OP_SOCK_BIND, OP_SOCK_LISTEN, OP_SOCK_ACCEPT,
     OP_SOCK_RECV, OP_SOCK_SEND, OP_SOCK_CLOSE,
