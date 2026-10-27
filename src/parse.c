@@ -6,6 +6,20 @@
 
 const char *g_src_name = "program";
 
+char g_parse_err[256] = {0};
+size_t g_parse_pos = 0;
+
+/* Record the error and unwind: parse_block returns NULL up the chain.
+   Historical CLI message shape ("name: parse error: msg (at codepoint N)")
+   is reproduced by the caller. */
+static bool parse_error(const char *msg, size_t pos) {
+    size_t i = 0;
+    while (msg[i] && i + 1 < sizeof(g_parse_err)) { g_parse_err[i] = msg[i]; i++; }
+    g_parse_err[i] = 0;
+    g_parse_pos = pos;
+    return false;
+}
+
 Block *block_new(void) {
     Block *b = malloc(sizeof(Block));
     b->items = NULL; b->count = 0; b->cap = 0;
@@ -26,11 +40,6 @@ Instr *block_push(Block *b, OpCode op) {
     memset(ins, 0, sizeof(Instr));
     ins->op = op;
     return ins;
-}
-
-static void parse_error(const char *msg, size_t pos) {
-    fprintf(stderr, "%s: parse error: %s (at codepoint %zu)\n", g_src_name, msg, pos);
-    exit(1);
 }
 
 static OpCode arity_op(cp_t ch, int count) {
@@ -54,20 +63,25 @@ Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at_zwj) {
 
         if (ch == CP_HAIR) {
             i++;
-            int64_t bits = 0;
+            /* two's-complement 64-bit: literal wraps like every other ISA
+               value; a 64+ bit literal keeps its low 64 bits */
+            uint64_t bits = 0;
             size_t nbits = 0;
             while (i < len && (cps[i] == CP_DIG0 || cps[i] == CP_DIG1)) {
-                bits = bits * 2 + (cps[i] == CP_DIG1 ? 1 : 0);
+                bits = bits * 2 + (cps[i] == CP_DIG1 ? 1u : 0u);
                 nbits++;
                 i++;
             }
-            if (nbits == 0) parse_error("empty literal", i);
-            if (i >= len || (cps[i] != CP_LS && cps[i] != CP_SOFT))
+            if (nbits == 0) { parse_error("empty literal", i); block_free(blk); return NULL; }
+            if (i >= len || (cps[i] != CP_LS && cps[i] != CP_SOFT)) {
                 parse_error("unterminated literal (expected LINE SEPARATOR or SOFT HYPHEN)", i);
+                block_free(blk);
+                return NULL;
+            }
             bool soft = (cps[i] == CP_SOFT);
             i++;
             Instr *ins = block_push(blk, OP_PUSH);
-            ins->value = bits;
+            ins->value = (int64_t)bits;
             if (soft) {
                 block_push(blk, OP_CHAROUT);
             }
@@ -76,16 +90,18 @@ Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at_zwj) {
 
         if (ch == CP_WJ) {
             i++;
-            if (i >= len || cps[i] != CP_ZWNJ) parse_error("expected block open after IF", i);
+            if (i >= len || cps[i] != CP_ZWNJ) { parse_error("expected block open after IF", i); block_free(blk); return NULL; }
             i++;
             size_t p = i;
             Block *then_b = parse_block(cps, len, &p, true);
+            if (!then_b) { block_free(blk); return NULL; }
             i = p;
             Block *else_b = NULL;
             if (i < len && cps[i] == CP_ZWNJ) {
                 i++;
                 p = i;
                 else_b = parse_block(cps, len, &p, true);
+                if (!else_b) { block_free(then_b); block_free(blk); return NULL; }
                 i = p;
             }
             Instr *ins = block_push(blk, OP_IF);
@@ -96,16 +112,20 @@ Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at_zwj) {
 
         if (ch == CP_ALM) {
             i++;
-            if (i >= len || cps[i] != CP_ZWNJ) parse_error("expected condition block after WHILE", i);
+            if (i >= len || cps[i] != CP_ZWNJ) { parse_error("expected condition block after WHILE", i); block_free(blk); return NULL; }
             i++;
             size_t p = i;
             Block *cond_b = parse_block(cps, len, &p, true);
+            if (!cond_b) { block_free(blk); return NULL; }
             i = p;
-            if (i >= len || cps[i] != CP_ZWNJ)
+            if (i >= len || cps[i] != CP_ZWNJ) {
                 parse_error("expected loop body block after WHILE condition", i);
+                block_free(cond_b); block_free(blk); return NULL;
+            }
             i++;
             p = i;
             Block *body_b = parse_block(cps, len, &p, true);
+            if (!body_b) { block_free(cond_b); block_free(blk); return NULL; }
             i = p;
             Instr *ins = block_push(blk, OP_LOOP);
             ins->then_blk = cond_b;   /* condition, re-evaluated every iteration */
@@ -121,6 +141,8 @@ Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at_zwj) {
             i += (size_t)count;
             continue;
         }
+
+        if (ch == CP_SYS) { block_push(blk, OP_SYSCALL); i++; continue; }
 
         switch (ch) {
             case CP_ITIMES: block_push(blk, OP_DUP);     i++; break;
@@ -151,6 +173,9 @@ Block *parse_block(const cp_t *cps, size_t len, size_t *pos, bool stop_at_zwj) {
             case CP_FILE_READ:   block_push(blk, OP_FILE_READ);   i++; break;
             case CP_FILE_STAT:   block_push(blk, OP_FILE_STAT);   i++; break;
             case CP_DIR_LIST:    block_push(blk, OP_DIR_LIST);    i++; break;
+            case CP_FILE_CREATE: block_push(blk, OP_FILE_CREATE); i++; break;
+            case CP_FILE_WRITE:  block_push(blk, OP_FILE_WRITE);  i++; break;
+            case CP_FILE_APPEND: block_push(blk, OP_FILE_APPEND); i++; break;
             case CP_SOFT:    i++; break;
             case CP_ZWJ:    i++; break;
             case CP_ZWNJ:   i++; break;
@@ -190,7 +215,12 @@ cp_t *extract_program(const cp_t *full, size_t full_len, size_t *out_len, bool *
     return out;
 }
 
+/* NULL on parse error; g_parse_err / g_parse_pos set. Caller frees nothing
+   (partial words are freed here). */
 Block **split_and_parse_words(const cp_t *cps, size_t len, size_t *out_word_count) {
+    g_parse_err[0] = 0;
+    g_parse_pos = 0;
+    if (len == 0) { *out_word_count = 0; return malloc(sizeof(Block *)); }
     size_t word_count = 1;
     for (size_t i = 0; i < len; i++) if (cps[i] == CP_PS) word_count++;
 
@@ -200,7 +230,14 @@ Block **split_and_parse_words(const cp_t *cps, size_t len, size_t *out_word_coun
         if (i == len || cps[i] == CP_PS) {
             size_t seg_len = i - seg_start;
             size_t p = 0;
-            words[w++] = parse_block(cps + seg_start, seg_len, &p, false);
+            Block *blk = parse_block(cps + seg_start, seg_len, &p, false);
+            if (!blk) {
+                for (size_t k = 0; k < w; k++) block_free(words[k]);
+                free(words);
+                *out_word_count = 0;
+                return NULL;
+            }
+            words[w++] = blk;
             seg_start = i + 1;
         }
     }

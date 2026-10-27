@@ -6,3 +6,5 @@ src/*.o
 *.so
 *.dSYM/
 *.d
+src/fuzz_parse
+src/fuzz_vm

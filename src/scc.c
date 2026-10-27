@@ -38,18 +38,19 @@ static char *xstrdup_n(const char *s, size_t l) {
 static char *xstrdup(const char *s) { return xstrdup_n(s, strlen(s)); }
 
 enum {
-    T_EOF = 0, T_IDENT, T_NUMBER, T_CHAR,
+    T_EOF = 0, T_IDENT, T_NUMBER, T_CHAR, T_STRING,
     T_LP, T_RP, T_LBRACE, T_RBRACE, T_LBRACK, T_RBRACK,
     T_SEMI, T_COMMA,
     T_ASSIGN, T_PLUS, T_MINUS, T_STAR, T_SLASH, T_PERCENT,
-    T_AMPER, T_PIPE, T_CARET, T_NOT,
+    T_AMPER, T_PIPE, T_CARET, T_NOT, T_TILDE,
     T_EQ, T_NE, T_LT, T_GT, T_LE, T_GE,
     T_LSHIFT, T_RSHIFT, T_ANDAND, T_OROR
 };
 
 static const char *TOKNAMES[] = {
-    "end of file", "identifier", "number", "char literal", "(", ")", "{", "}",
-    "[", "]", ";", ",", "=", "+", "-", "*", "/", "%", "&", "|", "^", "!",
+    "end of file", "identifier", "number", "char literal", "string literal",
+    "(", ")", "{", "}", "[", "]", ";", ",", "=", "+", "-", "*", "/", "%",
+    "&", "|", "^", "!", "~",
     "==", "!=", "<", ">", "<=", ">=", "<<", ">>", "&&", "||"
 };
 
@@ -65,7 +66,8 @@ static void tpush(int kind, int64_t num, const char *s, int line) {
     }
     T.toks[T.n].kind = kind;
     T.toks[T.n].num = num;
-    T.toks[T.n].s = s ? xstrdup(s) : NULL;
+    T.toks[T.n].s = s ? (kind == T_STRING ? xstrdup_n(s, (size_t)num)
+                                          : xstrdup(s)) : NULL;
     T.toks[T.n].line = line;
     T.n++;
 }
@@ -88,6 +90,57 @@ static void lex(const char *src) {
             }
             if (!src[i]) die(start_line, "unterminated /* comment");
             i += 2;
+            continue;
+        }
+        if (c == '"') {
+            /* string literal -> global data bytes; same escapes as Quill:
+               \\ \" \n \t \r \0. One cell per byte, one zero terminator. */
+            i++;
+            size_t start = i;
+            size_t backslash = 0;
+            while (src[i] && src[i] != '"') {
+                if (src[i] == '\n') die(line, "unterminated string literal");
+                if (src[i] == '\\') {
+                    i++;
+                    char e = src[i];
+                    if (!(e == 'n' || e == 't' || e == 'r' || e == '\\' ||
+                          e == '"' || e == '0'))
+                        die(line, "bad string escape '\\%c'", e ? e : '?');
+                    backslash++;
+                    if (!src[i]) break;
+                    i++;
+                    continue;
+                }
+                i++;
+            }
+            if (src[i] != '"') die(line, "unterminated string literal");
+            size_t rawlen = i - start - backslash;
+            unsigned char *bytes = xmalloc(rawlen + 1);
+            size_t k = 0;
+            for (size_t p2 = start; p2 < i; p2++) {
+                if (src[p2] == '\\') {
+                    p2++;
+                    char e = src[p2];
+                    switch (e) {
+                        case 'n': bytes[k++] = 10; break;
+                        case 't': bytes[k++] = 9;  break;
+                        case 'r': bytes[k++] = 13; break;
+                        case '\\': bytes[k++] = 92; break;
+                        case '"':  bytes[k++] = 34; break;
+                        case '0':  bytes[k++] = 0;  break;
+                    }
+                    continue;
+                }
+                bytes[k++] = (unsigned char)src[p2];
+            }
+            tpush(T_STRING, (int64_t)rawlen, (const char *)bytes, line);
+            free(bytes);
+            i++;
+            continue;
+        }
+        if (c == '~') {
+            tpush(T_TILDE, 0, NULL, line);
+            i++;
             continue;
         }
         if (isalpha((unsigned char)c) || c == '_') {
@@ -153,7 +206,8 @@ static void lex(const char *src) {
             case '!': k = T_NOT; break;
             case '<': k = T_LT; break;
             case '>': k = T_GT; break;
-            default: die(line, "unexpected character '%c' (v0 has no strings, '~', '++', '--')", c);
+            case '"': case '~': continue;   /* handled above, never reached */
+            default: die(line, "unexpected character '%c' (v0 has no '++' or '--')", c);
         }
         if (c == '<' && src[i+1] == '<') { tpush(T_LSHIFT, 0, NULL, line); i += 2; continue; }
         if (c == '>' && src[i+1] == '>') { tpush(T_RSHIFT, 0, NULL, line); i += 2; continue; }
@@ -237,7 +291,7 @@ static void sb_wordline(SB *sb, const char *name) {
 }
 
 
-typedef struct { char *name; int64_t addr; int is_array; int64_t len; int has_init; } Global;
+typedef struct { char *name; int64_t addr; int is_array; int64_t len; int has_init; int is_str; unsigned char *sbytes; } Global;
 
 typedef struct {
     char *name;
@@ -275,15 +329,40 @@ static size_t g_nfns = 0, g_capfn = 0;
 static int64_t g_next_global_addr = FIRST_GLOBAL_ADDR;
 
 static const char *BUILTINS[] = {
-    "putc", "putn", "getc", "peek", "poke", "sleep", "rnd", "exit", NULL
+    "putc", "putn", "getc", "peek", "poke", "sleep", "rnd", "exit", "sys", NULL
 };
 static const char *KEYWORDS[] = {
     "fn", "let", "if", "else", "while", "for", "return", NULL
 };
 static const char *RESERVED[] = { "SP", "FP", "_program", NULL };
 static bool g_builtin_void[] = {
-    true, true, false, false, true, true, false, true,
-    /* putc putn getc peek poke sleep rnd exit */
+    true, true, false, false, true, true, false, true, false,
+    /* putc putn getc peek poke sleep rnd exit sys */
+};
+
+/* Same core-ABI arity table as vm.c (syscalls 1..19; 18/19 are core memory
+   facilities). Compile-time checked so a mismatched sys() call dies in the
+   compiler, not on the tape. */
+static const int SYS_ARITY[] = {
+    /* 1 sock-create  */ 0,
+    /* 2 sock-bind    */ 2,
+    /* 3 sock-listen  */ 2,
+    /* 4 sock-accept  */ 1,
+    /* 5 sock-recv    */ 3,
+    /* 6 sock-send    */ 3,
+    /* 7 sock-close   */ 1,
+    /* 8 file-open    */ 3,
+    /* 9 file-read    */ 3,
+    /*10 file-stat    */ 2,
+    /*11 dir-list     */ 4,
+    /*12 file-create  */ 2,
+    /*13 file-write   */ 3,
+    /*14 file-append  */ 2,
+    /*15 sleep        */ 1,
+    /*16 yield        */ 0,
+    /*17 exit         */ 1,
+    /*18 mem-set      */ 3,
+    /*19 mem-copy     */ 3,
 };
 
 static bool is_builtin(const char *s) {
@@ -327,14 +406,14 @@ static Local *find_local(Fn *f, const char *name) {
     return NULL;
 }
 
-enum { N_INT, N_VAR, N_ARR, N_CALL, N_BUILTIN, N_BIN, N_UNARY };
+enum { N_INT, N_VAR, N_ARR, N_CALL, N_BUILTIN, N_BIN, N_UNARY, N_ADDR };
 enum {
     B_ADD, B_SUB, B_MUL, B_DIV, B_MOD,
     B_AND, B_ORR, B_XOR, B_SHL, B_SHR,
     B_EQ, B_NE, B_LT, B_LE, B_GT, B_GE,
     B_LAND, B_LOR
 };
-enum { U_NEG, U_NOT };
+enum { U_NEG, U_NOT, U_BNOT };
 
 typedef struct Node Node;
 
@@ -431,6 +510,28 @@ static Node *parse_primary(void) {
                 }
             }
             expect(T_RP, "')' to close the call");
+            if (strcmp(name, "sys") == 0) {
+                /* sys(num, a, b, c, d): 1..5 args; arg count must match the
+                   core-ABI arity of the syscall number (numbers > 17 are
+                   host extensions and their arity is the host's business). */
+                if (n->args.count < 1 || n->args.count > 1 + 4)
+                    die(line, "sys() takes 1..5 arguments (num up to 4 args), got %zu",
+                            n->args.count);
+                Node *numnode = n->args.items[0];
+                if (numnode->kind != N_INT)
+                    die(line, "sys() first argument must be an integer literal (the syscall number)");
+                int64_t num = numnode->num;
+                if (num < 1)
+                    die(line, "sys() syscall number must be >= 1, got %lld",
+                            (long long)num);
+                if (num <= (int64_t)(sizeof(SYS_ARITY) / sizeof(SYS_ARITY[0]))) {
+                    int want = SYS_ARITY[num - 1];
+                    if ((int)n->args.count - 1 != want)
+                        die(line, "sys() for syscall %lld takes %d argument(s) after the number, got %zu",
+                                (long long)num, want, n->args.count - 1);
+                }
+                return n;
+            }
             static const int ARITY[] = { 1, 1, 0, 1, 2, 1, 1, 0 };
             for (int i = 0; BUILTINS[i]; i++) {
                 if (strcmp(name, BUILTINS[i]) == 0) {
@@ -478,6 +579,24 @@ static Node *parse_primary(void) {
 
 static Node *parse_unary(void) {
     int line = cur_line();
+    if (peek_kind(0) == T_AMPER && peek_kind(1) == T_IDENT) {
+        /* &name / &name[i]: base address of a global array/string, or the
+           address of a local's cell (FP+off). For globals with no index the
+           address must be the one Scribe programs hand to syscalls. */
+        const char *nm = peek_tok_at(1);
+        if (is_keyword_name(nm) || is_builtin(nm))
+            die(line, "'&%s': names may not be addresses", nm);
+        advance(); /* & */
+        advance(); /* ident */
+        Node *n = node_new(N_ADDR, line);
+        n->s = xstrdup(nm);
+        if (peek_kind(0) == T_LBRACK) {
+            advance();
+            n->b = parse_expr();
+            expect(T_RBRACK, "']' after index");
+        }
+        return n;
+    }
     if (peek_kind(0) == T_MINUS) {
         if (peek_kind(1) == T_NUMBER || peek_kind(1) == T_CHAR) {
             advance();
@@ -496,6 +615,12 @@ static Node *parse_unary(void) {
         advance();
         Node *n = node_new(N_UNARY, line);
         n->op = U_NOT;
+        n->a = parse_unary();
+        return n;
+    }    if (peek_kind(0) == T_TILDE) {
+        advance();
+        Node *n = node_new(N_UNARY, line);
+        n->op = U_BNOT;
         n->a = parse_unary();
         return n;
     }
@@ -627,25 +752,47 @@ static void parse_global_decl(void) {
     } else {
         g_next_global_addr += 1;
     }
-    if (g->is_array && peek_kind(0) == T_ASSIGN)
-        die(line, "array '%s' can't have an initializer (v0)", nm);
-    if (!g->is_array && peek_kind(0) == T_ASSIGN) {
-        advance();
-        int64_t v = 0;
-        if (peek_kind(0) == T_MINUS) {
-            advance();
-            if (peek_kind(0) != T_NUMBER && peek_kind(0) != T_CHAR)
-                die(line, "global initializers must be literal constants");
-            v = -T.toks[T.pos].num;
-            advance();
-        } else if (peek_kind(0) == T_NUMBER || peek_kind(0) == T_CHAR) {
-            v = T.toks[T.pos].num;
+    /* string initializers: `let name = "bytes";` — the global is byte data,
+       one cell per byte plus one zero terminator cell (C-string convention),
+       emitted as init stores at program start. Globals only (v0.1). */
+    if (peek_kind(0) == T_ASSIGN) {
+        if (g->is_array) {
+            if (peek_kind(1) == T_STRING)
+                die(line, "array '%s' with initializer is v0.1 string data: write `let %s = \"...\";` without [N]", nm, nm);
+            die(line, "array '%s' can't have an initializer (v0)", nm);
+        }
+        if (peek_kind(1) == T_STRING) {
+            advance();  /* = */
+            Tok *t = &T.toks[T.pos];
+            int64_t slen = t->num;
+            /* re-reserve: the scalar slot assumed above is superseded */
+            /* addr stays; grow the reservation by the string cells */
+            unsigned char *bytes = xmalloc((size_t)slen + 1);
+            memcpy(bytes, t->s ? t->s : "", (size_t)slen);
+            g->is_str = 1;
+            g->sbytes = bytes;
+            g->len = slen;               /* bytes; terminator cell reserved below */
+            g->has_init = 1;             /* but handled specially at emit */
+            g_next_global_addr += slen;  /* +1 terminator over the scalar slot */
             advance();
         } else {
-            die(line, "global initializers must be literal constants");
+            advance();
+            int64_t v = 0;
+            if (peek_kind(0) == T_MINUS) {
+                advance();
+                if (peek_kind(0) != T_NUMBER && peek_kind(0) != T_CHAR)
+                    die(line, "global initializers must be literal constants");
+                v = -T.toks[T.pos].num;
+                advance();
+            } else if (peek_kind(0) == T_NUMBER || peek_kind(0) == T_CHAR) {
+                v = T.toks[T.pos].num;
+                advance();
+            } else {
+                die(line, "global initializers must be literal constants");
+            }
+            g->len = v;
+            g->has_init = 1;
         }
-        g->len = v;
-        g->has_init = 1;
     }
     expect(T_SEMI, "';' after global declaration");
 }
@@ -995,6 +1142,24 @@ static void gen_expr(Gen *g, Node *n) {
             em(g, "add");
             em(g, "load");
             break;
+        case N_ADDR: {
+            /* the address itself, plus an optional element offset */
+            Local *l = find_local(g->fn, n->s);
+            if (l) {
+                em(g, "load FP");
+                em_int(g, l->off);
+                em(g, "add");
+            } else {
+                Global *gl = find_global(n->s);
+                if (!gl) die(n->line, "undefined variable '%s'", n->s);
+                em_int(g, gl->addr);
+            }
+            if (n->b) {
+                gen_expr(g, n->b);
+                em(g, "add");
+            }
+            break;
+        }
         case N_CALL: {
             for (size_t i = 0; i < n->args.count; i++) gen_expr(g, n->args.items[i]);
             Fn *f = find_fn(n->s);
@@ -1012,6 +1177,13 @@ static void gen_expr(Gen *g, Node *n) {
             } else if (strcmp(n->s, "rnd") == 0) {
                 gen_expr(g, n->args.items[0]);
                 em(g, "rand");
+            } else if (strcmp(n->s, "sys") == 0) {
+                /* args pushed in natural order, then the number, then the
+                   syscall: push a ; push b ; push num ; sys */
+                for (size_t i = 1; i < n->args.count; i++)
+                    gen_expr(g, n->args.items[i]);
+                em_int(g, (int64_t)n->args.items[0]->num);
+                em(g, "sys");
             } else {
                 die(n->line, "unknown builtin in value position");
             }
@@ -1021,6 +1193,11 @@ static void gen_expr(Gen *g, Node *n) {
             gen_expr(g, n->a);
             if (n->op == U_NEG) {
                 em(g, "neg");
+            } else if (n->op == U_BNOT) {
+                /* bitwise complement: push -1, xor */
+                em_int(g, 1);
+                em(g, "neg");
+                em(g, "xor");
             } else {
                 em(g, "sign"); em(g, "dup"); em(g, "mul");
                 em_int(g, 1); em(g, "swap"); em(g, "sub");
@@ -1271,7 +1448,15 @@ static void gen_program(void) {
 
     for (size_t i = 0; i < g_nglobals; i++) {
         Global *gl = &g_globals[i];
-        if (gl->has_init) {
+        if (gl->is_str) {
+            /* byte data: one store per byte; the terminator cell is already
+               zero (tape zero-init) — no store needed */
+            for (int64_t c = 0; c < gl->len; c++) {
+                sb_linef(&prog, "push %lld", (long long)(gl->addr + c));
+                sb_linef(&prog, "push %llu", (unsigned long long)gl->sbytes[c]);
+                sb_linef(&prog, "store");
+            }
+        } else if (gl->has_init) {
             sb_linef(&prog, "push %lld", (long long)gl->addr);   /* addr first */
             sb_linef(&prog, "push %lld", (long long)gl->len);   /* value */
             sb_linef(&prog, "store");

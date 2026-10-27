@@ -7,9 +7,9 @@ these are one editor-setting away from being silently destroyed.
 A program is a sequence of invisible codepoints, plus as much visible "cover text"
 as you like: **any character not defined below is ignored entirely.** This allows you to splice a `.txt` document with Invisible Ink, and that's the language's entire purpose. Critically, `U+0020 SPACE` itself is *not* one of the spec codepoints, so ordinary prose (which is mostly made of spaces) is always safe cover text: a program can be laced anywhere in a document, including in the middle of a sentence, not just at paragraph breaks.
 
-Writing this language is genuinely awful, so I've made its own text editor. Just to let you get a sense of how painful this language is to write, I've added the raw inputs I wrote in the IDE for the blackjack example, you can view the raw here: [view the blackjack raw](blackjack-raw.md)
+Writing this language is genuinely awful, so I've made its own text editor. Just to let you get a sense of how painful this language is to write, I've added the raw inputs I wrote in the IDE for the blackjack example, you can view the raw here: [view the blackjack raw](blackjack-ink.txt)
 
-Just for completeness, I figured I'd also disassemble the blackjack example too. You can view it here: [view the blackjack disassembled quill source](blackjack-disassemble.q)
+Just for completeness, I figured I'd also disassemble the blackjack example too. You can view it here: [view the blackjack disassembled quill source](blackjack-quill.q)
 
 ---
 
@@ -37,11 +37,13 @@ ink help <command>
 
 | Command | Aliases | Args / Options | Description |
 |---|---|---|---|
-| `run <file>` | `r` | `<file>` `--steps <N>` / `--max-steps <N>` `--depth <N>` / `--max-depth <N>` `--stats` `-h/--help` | Run an Invisible Ink program. `<file>` is UTF-8 (cover text allowed, `FEFF`-embedded-aware). `--steps` overrides step limit (default 10M), `--depth` overrides call-depth (default 20k), `--stats` prints `steps/words/stack/mem/elapsed` to stderr. Legacy `ink <file>` and `ink <file> --stats` still work. |
-| `dump <file>` | — | `<file>` | Dump parsed AST in internal style (`word 0:` / `then:` / `else:`). Legacy `ink -d <file>` maps here. |
-| `disassemble <input> [-o <output>]` | `disasm`, `decompile`, `d` | `<input>` `-o`/`--output <file>` `-h/--help` | Decompile Invisible Ink → Quill (`word word_0` …). Writes to stdout if `-o` omitted. Replaces `quill disassemble`. |
+| `run <file>` | `r` | `<file>` `--steps <N>` / `--max-steps <N>` `--depth <N>` / `--max-depth <N>` `--stack <N>` `--stats` `-h/--help` | Run an Invisible Ink program. `<file>` is UTF-8 (cover text allowed, `FEFF`-embedded-aware) or an `.inkb` object (autodetected). `--steps` overrides step limit (default 10M, `0` disables), `--depth` overrides call-depth (default 20k), `--stack <N>` caps the data stack at N cells (`0` = unlimited, default), `--stats` prints `steps/words/stack/mem/elapsed` to stderr. Legacy `ink <file>` and `ink <file> --stats` still work. |
+| `obj <input.q\|.txt> [-o <output>]` | `object` | `<input>` `-o`/`--output <file>` `-h/--help` | Compile a `.q` (via the Quill assembler) or a `.txt` (spec codepoints extracted) into an `.inkb` object file. Default output: `<input>.inkb`. See *the `.inkb` object format* below. |
+| `dump <file>` | — | `<file>` | Dump parsed AST in internal style (`word 0:` / `then:` / `else:`). Accepts `.inkb` transparently. Legacy `ink -d <file>` maps here. |
+| `disassemble <input> [-o <output>]` | `disasm`, `decompile`, `d` | `<input>` `-o`/`--output <file>` `-h/--help` | Decompile Invisible Ink → Quill (`word word_0` …). Accepts `.inkb` transparently. Writes to stdout if `-o` omitted. Replaces `quill disassemble`. |
 | `assemble <input> [-o <output>]` | `asm`, `compile`, `build`, `c` | `<input>` `-o`/`--output <file>` `-h/--help` | Assemble Quill `.q` → Invisible Ink. Writes to stdout if `-o` omitted. Replaces `quill assemble`. |
-| `check <file>` | — | `<file>` `-h/--help` | Parse + validate without executing. Prints word count / spec codepoints / embedded status. |
+| `check <file>` | — | `<file>` `-h/--help` | Parse + validate without executing. Prints word count / spec codepoints / embedded status; for `.inkb` inputs reports object version + word/memory counts. |
+| `sched <file...>` | — | `<file...>` `--quantum <N>` `--steps <N>` `--depth <N>` `--stack <N>` `-h/--help` | Run several programs as concurrent processes of one VM core. Each file may be `.txt` or `.inkb`. Round-robin op-quantum scheduler (default 50,000 ops/turn); blocking syscalls (accept/recv/char-in/sleep) park the process instead of stalling the machine. `--stack <N>` applies the data-stack cap to every process. See *ISA v4* below. |
 | `edit [file]` | `ide`, `ed` | `[file]` `--selftest` `-h/--help` | Launch InkIDE visual editor. No file → new buffer. `--selftest` runs internal tests. Also available as `ink ide`. |
 | `help [command]` | `-h`, `--help` | `[command]` | Show global or per-command help. |
 
@@ -107,6 +109,22 @@ repeats in a row (1×, 2×, or 3×). Each row is a coherent little family:
 
 Negative literals aren't a separate syntax: push the unsigned value, then apply
 EN SPACE at arity 1 (`negate`).
+
+**Arithmetic is defined to wrap.** Every operation is two's-complement 64-bit
+with wraparound — this is a *semantic guarantee*, not an implementation detail,
+because the inkOS kernel is written in this language and cannot inherit
+undefined behavior:
+
+- `add`/`sub`/`mul` wrap modulo 2⁶⁴ (`INT64_MAX + 1 == INT64_MIN`, `2³² × 2³² == 0`).
+- `neg` of `INT64_MIN` is `INT64_MIN` (no trap).
+- `INT64_MIN / -1` is `INT64_MIN`; `INT64_MIN % -1` is `0` (the edge cases C leaves undefined).
+- `pow` wraps likewise (`2^65 == 0`), `0^0 == 1`, and exponents `< 0` wrap too.
+- Shift counts keep the ISA v2 rule `count & 63`.
+- Literal parsing keeps the low 64 bits of any binary-digit run, so source
+  literals above 2⁶³ wrap as well.
+
+Division/modulo by zero remains a halt-on-error (below); only the overflow
+edge cases changed from "undefined" to "defined, wraps".
 
 ### Bitwise and shifts (ISA v2)
 
@@ -227,6 +245,7 @@ Paths live in memory as byte arrays: `path_ptr` points at `mem[path_ptr..path_pt
 | U+206D | `file-read` | `fd buf len -- n` (`0` = EOF, `-1` = error) |
 | U+206E | `file-stat` | `path_ptr path_len -- size` (`-1` missing, `-2` directory) |
 | U+206F | `dir-list` | `path_ptr path_len out_buf out_cap -- n` (newline-separated names, `/` suffix for dirs, sorted case-insensitively; `-1` on error) |
+| U+FFF0 | `sys` (ISA v4) | generic syscall op, see *ISA v4* below |
 
 ### Control flow
 
@@ -279,6 +298,8 @@ and it already is.
 **Halt-on-error**, matching original Whitespace. Any of the following halts the program immediately with a runtime error (exit 1, message on stderr):
 
 - stack underflow (`dup`/`swap`/`drop`/`rot`/arity ops/`call`/`if`/`while`/`num-out`/`char-out`/`rand`/`store`/`load`/`sleep` needing a value that isn't there)
+- stack limit exceeded (a host-provided capacity cap on the data stack; only when capped with `--stack <N>` or `vm.stack_limit`)
+- block nesting too deep (static `if`/`while` structure > 1,024 levels; see Runtime limits)
 - divide-by-zero or modulo-by-zero
 - malformed literal (empty, or unterminated; not closed by `EN QUAD` or `SOFT HYPHEN`)
 - `rand` with `n <= 0`
@@ -290,17 +311,193 @@ and it already is.
 
 `char-in` at EOF is *not* an error. It pushes `-1`.
 
+Arithmetic overflow is *never* listed above on purpose: it is defined
+behavior (wraps, see the arithmetic section).
+
 ---
 
 ## Runtime limits
 
-- **Steps:** 10,000,000 ops per run (`g_max_steps` in `src/vm.c` / `src/ink.h`, default `DEFAULT_MAX_STEPS`). Override at runtime: `ink run --steps 5000000 program.txt` or `--max-steps`. `--steps 0` disables the limit (needed for servers like `examples/quill/httpd.q`).
-- **Call depth:** 20,000 nested `call`s (`DEFAULT_MAX_DEPTH`). Override: `ink run --depth 1000 program.txt`.
-- **Memory:** heap-grown (`g_mem`), doubled as needed, zero-filled.
-- **I/O:** `char-in` reads UTF-8 codepoints from stdin; `char-out`/`num-out`/`sleep`/`char-in` all `fflush(stdout)` before blocking/sleeping.
+- **Steps:** 10,000,000 ops per run (`vm.max_steps`, default `DEFAULT_MAX_STEPS` in `src/ink.h`). Override at runtime: `ink run --steps 5000000 program.txt` or `--max-steps`. `--steps 0` disables the limit (needed for servers like `examples/quill/httpd.q`). `pow` bills **one step per multiply of its inner loop**, so a huge exponent trips the step limit rather than hanging inside a single op.
+- **Call depth:** 20,000 nested `call`s (`DEFAULT_MAX_DEPTH`, `vm.max_depth`). Override: `ink run --depth 1000 program.txt`.
+- **Data-stack cap:** off by default (`vm.stack_limit = 0`). With `--stack <N>` the VM faults cleanly ("stack limit exceeded") when a program's data stack would exceed N *cells in use*; embedded hosts can enforce it without a flag (`vm.stack_limit`).
+- **Block nesting:** `if`/`else`/`while` blocks recurse on the host's *C* stack (independent of call depth, which is bounded separately), so the core statically caps structure nesting at 1,024 levels (`INK_MAX_BLOCK_NEST`) and faults cleanly instead of exhausting the stack. `call` frames don't count — each word body re-roots the counter at zero, so deep recursion is governed by `--depth` alone. a note on depth: real programs nest shallowly (the Scribe-compiled examples peak at a dozen or so levels) — the cap exists for adversarial input, not normal code. Compile-time depth is the same budget: Scribe's early-return guards wrap statements in nested `if`s, but generated programs stay far under the cap.
+- **Memory:** heap-grown (`vm.mem`), doubled as needed, zero-filled. A hard cap is available per instance (`vm.mem_limit`) for embedded hosts.
+- **I/O:** `char-in` reads UTF-8 codepoints from stdin; `char-out`/`num-out`/`sleep`/`char-in` all `fflush(stdout)` before blocking/sleeping (desktop host).
 
 Validate without running: `ink check program.txt`
 Dump parsed words/blocks: `ink dump program.txt` (internal) or `ink disassemble program.txt` (to Quill).
+
+## ISA v4 — instance VM, syscalls, yields and waits
+
+The interpreter is no longer a pile of globals: `src/vm.c` is a **freestanding
+core** with no stdio/libc at all. One run = one `InkVM` instance (all state:
+stack, memory, words, RNG, limits, error slot). Everything an environment could
+do differently lives behind a small host vtable (`InkHost`):
+
+```c
+char_out   // one codepoint to the display
+char_in    // one codepoint from the keyboard (-1 = EOF)
+rand_seed  // entropy for the PRNG
+fatal      // out-of-memory policy
+realloc    // the only allocation primitive
+suspend    // pause/resume hook (see below)
+now_ms     // monotonic clock
+sys        // the syscall table
+```
+
+Two hosts ship today:
+
+* `src/vmhost.c` — the classic blocking desktop host (`ink run`): stdin/stdout,
+  `/dev/urandom`, real sockets and files, `nanosleep`.
+* `src/sched.c` — the scheduling host used by `ink sched`: every potentially
+  blocking operation parks the process instead. `"suspend"` is the context
+  switch: a ucontext swap out and back, so on resume execution continues
+  *inside the same host call*, transparently.
+
+### Outcome semantics
+
+Every run ends in one of exactly five outcomes:
+
+| Outcome | Meaning |
+|---|---|
+| `OUT_NONE`  | not started / still running |
+| `OUT_HALT`  | clean stop (`halt` or program end), `exit_code` valid |
+| `OUT_ERROR` | fault; `errmsg` valid (stack underflow, step limit, …) |
+| `OUT_YIELD` | process gave up the rest of its turn (`sys 16`) |
+| `OUT_WAIT`  | process needs the world: fd readable/writable or deadline (see `vm.wait`) |
+
+A host without a `suspend` hook (plain `ink run`) treats yield/wait exactly as
+before: nothing to park, so `sys 16` returns `0` and the run simply continues —
+desktop behavior is unchanged.
+
+### Syscalls: one opcode, one table
+
+New kernel facilities are **not** new codepoints. There is exactly one generic
+op: `U+FFF0` (unassigned in the BMP, invisible like everything else here)
+compiled by Quill as `sys`. It pops a syscall number, pops the argument list,
+calls `host->sys`, and pushes the result. The fixed ABI:
+
+| # | Syscall | Args | Result |
+|---|---|---|---|
+| 1 | `sock-create`  | — | `fd` / `-1` |
+| 2 | `sock-bind`    | `fd port` | `0` / `-1` |
+| 3 | `sock-listen`  | `fd backlog` | `0` / `-1` |
+| 4 | `sock-accept`  | `fd` | `cfd` / `-1` |
+| 5 | `sock-recv`    | `fd buf len` | `n` (`0` = EOF, `-1` error) |
+| 6 | `sock-send`    | `fd buf len` | `n` (bytes sent) |
+| 7 | `sock-close`   | `fd` | `0` / `-1` |
+| 8 | `file-open`    | `path_ptr path_len flags` | `fd` / `-1` |
+| 9 | `file-read`    | `fd buf len` | `n` |
+| 10 | `file-stat`   | `path_ptr path_len` | `size` / `-1` / `-2` (dir) |
+| 11 | `dir-list`    | `path_ptr path_len out_buf out_cap` | `n` |
+| 12 | `file-create` | `path_ptr path_len` | `fd` / `-1` |
+| 13 | `file-write`  | `fd buf len` | `n` |
+| 14 | `file-append` | `path_ptr path_len` | `fd` / `-1` |
+| 15 | `sleep`       | `ms` | `0` |
+| 16 | `yield`       | — | `0` |
+| 17 | `exit`        | `code` | never (halts with `exit_code = code`) |
+| 18 | `mem-set`     | `addr fill len` | number of cells written |
+| 19 | `mem-copy`    | `dst src len` | number of cells copied |
+
+**18 and 19 are core-ABI facilities and live inside the interpreter core itself**
+(`vm_sys_core` in `src/vm.c`), not in any host: every host — desktop, scheduler,
+or a future kernel — implements them identically with zero host vtable code.
+
+- **`sys 18` (mem-set)** works like `memset`: sets `mem[addr..addr+len)` to
+  `fill`, returns `len`. Negative address/length is a runtime error.
+- **`sys 19` (mem-copy)** works like `memmove`: copies `mem[src..src+len)` to
+  `mem[dst..]`, returning `len`. Overlapping regions behave as if the source
+  were snapshotted first (the kernel's `delta` pipeline relies on this). Growth
+  of the memory tape works as with `store`.
+
+Numbers **1–19 are reserved** for this core ABI and will stay stable across
+hosts. **20 and up are host-extension territory**: unimplemented numbers return
+`-1` on the desktop host and may be anything on yours. Claim numbers 20+
+from a registry: pick the next free slot, document it, and keep the desktop
+host's `-1`-for-unknown convention for everything you don't implement.
+
+Calling convention: arguments are pushed in natural (program) order, then the
+number, then `sys`; the callee receives them first-pushed-first. The arity is a
+property of the *number*, not of the stack, so a mismatched call corrupts the
+stack — `scc` (Scribe) checks it at compile time for numbers ≤ 19.
+
+The v1 socket/file codepoints (`sock-*`, `file-*`, `sleep`) still work and
+compile down to the same syscall numbers, so hosts implement each facility
+exactly once. One historical quirk is preserved: the legacy `sleep` codepoint
+pops `ms` and pushes **nothing** (it was a void statement), while the modern
+`sys 15` returns `0`.
+
+### Toolchain support
+
+* **Quill:** `sys <num>` is sugar for *push num, sys*; a bare `sys` uses the
+  number already on the stack (what the Scribe compiler emits). Disassembly
+  prints `push N` + `sys`.
+* **Scribe:** `sys(num, a, b, c, d)` is a value builtin (0–4 args after the
+  number; the number must be an integer literal; arity against the table above
+  is compile-checked for num ≤ 19).
+
+### The `.inkb` object format
+
+`ink obj` compiles a program to an `.inkb` (Invisible Ink object) file: a
+fully-parsed, position-independent image the loader can paste straight into a
+VM without touching the Quill assembler or the cover-text scanner. This is
+what an inkOS process image looks like; it is also a faster and more tamper-
+evident distribution format than splicing codepoints into prose.
+
+Layout (all integers little-endian):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0  | 4 | magic `"INKB"` |
+| 4  | 2 | format version (`1`) |
+| 6  | 2 | ISA the program targets (`4`; tied to the ISA in `src/ink.h`) |
+| 8  | 4 | flags (must be `0` for now) |
+| 12 | 8 | `word_count` — number of word-block trees |
+| 20 | 8 | `mem_count` — number of memory-image entries |
+| 28 | … | `mem_count` × (`u64 addr`, `i64 value`) |
+| …  | … | `word_count` block trees, concatenated |
+
+Each block tree is:
+
+- `u32` item count;
+- that many items, each `u8 opcode` + `i64 value`;
+- for `if` (`23`) and `while` (`24`) items additionally: `u8 has_else` flag,
+  then the condition/first subtree, then — only when `has_else` — the
+  else/second subtree.
+
+The loader is strict: magic, version, ISA and flags are validated; opcodes
+outside the ISA's range are rejected; both subtree counts and trailing bytes
+must match exactly, so truncated or appended-to objects fail loudly instead of
+half-loading. Above the byte level, `src/obj.h` defines the checks,
+`src/progload.c` is the sniffer that accepts either `.inkb` or text programs
+(`run`/`check`/`dump`/`disassemble`/`sched` all go through it), and
+`ink obj a.q -o a.inkb` builds objects from Quill (or from extracted
+spec-codepoint text).
+
+### `ink sched`
+
+`ink sched --quantum 50000 a.txt b.txt …` runs every file as a separate process
+of the *same* core: round-robin, N ops per turn. A process that would block
+(`sock-accept`, `sock-recv`, `sock-send`, `char-in` on empty stdin, `sleep`) is
+parked on its fd/deadline and woken by `poll()` when ready — the scheduler never
+stops for one process. Ready processes interleave; sleeping ones don't burn
+quanta; a TCP server and a ticker coexist happily.
+
+```sh
+ink sched --quantum 1000 examples/sched/ticker.q examples/sched/ticker-b.q
+# A 4 / B 4 / 3 / 3 / 2 / 2 / 1 / 1 — two processes interleaving tick by tick
+ink sched --steps 0 --quantum 50000 examples/quill/guestbook.q   # serve HTTP
+```
+
+On process exit the scheduler reports `[sched] <file>: exit N (halt),
+steps=S` (or the runtime error) on stderr; the exit code is nonzero if any
+process errored or exited nonzero. Demos live in `examples/sched/`
+(`ticker.q`, `ticker-b.q` deadline waits, `echo-one.q` parks on stdin).
+
+This subcommand is also the desktop proof of the inkOS process model: the exact
+same core boots there as the kernel, with `suspend` as the context switch and
+syscalls that park instead of block.
 
 ## Quill (mnemonic assembly)
 
@@ -333,12 +530,19 @@ Examples in `examples/quill/` (`add.q`, `fib.q`, `countdown.q`,
 
 - Tokens are separated by any whitespace (spaces, tabs, newlines).
 - `;` starts a comment that runs to end of line. Comments are stripped
-  entirely and never affect emitted output.
-- Identifiers (word names, memory slot names): `[a-zA-Z_][a-zA-Z0-9_-]*`.
-- Integer literals: an optional `-`, then one or more decimal digits.
-- Keywords: `word`, `if`, `else`, `while`, `let`, `call`, `halt`, and the op
-  mnemonics in the tables below, are reserved and cannot be used as identifiers.
-- `{` and `}` delimit `if`/`else` blocks only.
+  entirely and never affect emitted output. (There is no `/* ... */`
+  block-comment form.)
+- Identifiers (word names, memory slot names, data names):
+  `[a-zA-Z_][a-zA-Z0-9_-]*`.
+- Integer literals: an optional `-`, then one or more decimal digits. Values
+  beyond `INT64_MAX` keep the low 64 bits (wrapping, like all arithmetic).
+- String literals (`"..."`, only inside `data` and Scribe) support the escapes
+  `\n`, `\t`, `\r`, `\\`, `\"`, `\0`.
+- Keywords: `word`, `data`, `if`, `else`, `while`, `let`, `call`, `halt`, and
+  the op mnemonics in the tables below, are reserved and cannot be used as
+  identifiers.
+- `{`, `}` delimit `if`/`else` blocks; `{ ... } { ... }` the `while` pair;
+  `,` separates `data` items.
 
 ### Program structure
 
@@ -391,6 +595,11 @@ mnemonics:
 | `xor`  | `a b -- a^b`  | `U+202C` ×1 |
 | `shl`  | `a b -- a << (b & 63)` | `U+202D` ×1 |
 | `shr`  | `a b -- (uint64)logical a >> (b & 63)` | `U+202E` ×1 |
+| `not`  | `a -- ~a` | sugar: `push 1`, `neg` (`-1`), `xor` |
+
+`not` has no codepoint of its own — it's pure sugar (push `-1`, `xor`), which
+keeps the codepoint set closed; the disassembler shows decompiled complements
+in that expanded form.
 
 **Negative literals** are not a separate literal form: `push -5`
 assembles to `push 5` immediately followed by `neg`.
@@ -545,6 +754,65 @@ word main
     num-out         ; prints 3
 ```
 
+```
+push <name>       ; sugar: pushes the slot's *base address* as a value
+```
+
+### Data sections and strings
+
+```
+data <name> = <item>, <item>, ...
+```
+
+A `data` directive (top level, outside any `word`) reserves an initialized
+memory block and gives it a name:
+
+- `data table = 7, 9, 42` — integers, one cell each.
+- `data hello = "Hi!\n"` — **strings occupy one byte per cell**, plus one
+  extra trailing `0` terminator cell per string (byte buffers need a
+  in-language "end of buffer" mark, since cells are just integers).
+  Trailing zero values are trimmed from the emitted block (the places beyond
+  are zero anyway), but a string always keeps its explicit terminator.
+- `data mixed = 1, "ab", 65` — items are laid out in order.
+
+At startup, the assembler appends hidden **init words** after every user word:
+one per `data` name, `push <value>; store` per cell (a run of ≥ 2 identical
+values collapses to `sys 18` mem-set). Word 0's body gets a generated
+prologue — `call`s to every init word — *before* its first real statement, so
+user code never sees uninitialized data. All of this is visible (and stable)
+in a disassembly: the init words appear as trailing `word_N` definitions.
+
+The `data` base addresses are contiguous with `let` slots and are usable
+anywhere an address is — this is the byte-buffer convention inkOS inherits:
+
+> **Bytes-in-cells policy:** one convention runs through the whole toolchain —
+> strings, path arrays, file/sock buffers are bytes stored one per cell,
+> terminated by a zero cell; zero cells are the universal "end of buffer"
+> sentinel. Cell values still span the full 64-bit range (a cell can be a byte
+> or an integer), but anything pointed-to is bytes-per-cell.
+
+```
+data hello = "Hi!\n"
+data table = 7, 9, 42
+
+word main
+    push hello
+    load
+    char-out       ; prints 'H' — push <name> is the base address
+    push hello
+    push 1
+    add
+    load
+    char-out       ; prints 'i' — one cell per byte, +1 moves one byte
+    push table
+    load
+    num-out        ; prints 7
+```
+
+Strings may also be written directly as addresses used by file
+(`file-open path_ptr path_len ...`) and socket syscalls: `"path.txt"` laid out
+by `data` is exactly a NUL-terminated byte array in memory.
+
 ### Ops I just added to Ink
 
 The ops I just added to the readme after I wrote them into the interpreter
@@ -632,6 +900,7 @@ functions defined later):
 
 ```
 <global-decl>  := "let" NAME ["[" <int> "]"] ["=" <expr>] ";"
+                 | "let" NAME "=" <string> ";"                      ; string global
 <fn-decl>      := "fn" NAME "(" [ NAME ["," NAME]* ] ")" "{" <stmt>* "}"
 <stmt>         := "let" NAME [ "[" <int> "]" ] ["=" <expr>] ";"   ; local
                |  NAME "=" <expr> ";" |  NAME "[" <expr> "]" "=" <expr> ";"
@@ -643,11 +912,19 @@ functions defined later):
                |  <builtin-call> ";"
                |  <expr> ";"                     ; e.g. a call for side effects
 <expr>         := || / && / | ^ & / == != / < > <= >= / << >> / + - / * / %
-                  unary - and ! / calls / peek(...) / literals / names / a[i]
+                  unary - ! ~ / calls / peek(...) / literals / names / a[i]
+                  &name / &name[i]               ; address-of
+                  string literals "..."          ; in `let` initializers
 ```
 
 `main` is required and takes zero arguments (arity is checked after the whole
 file parses, so definition order doesn't matter).
+
+Unary operators: `-` negates, `!` is logical not — it compiles to
+`sign; dup; mul; push 1; swap; sub`, i.e. `1 - sign(x)²`: exactly 1 when x is
+0, else 0 — and `~` is the **bitwise** complement, compiled to `push -1; xor`
+(the same sugar as Quill's `not`, so `~x == -1 ^ x` and `~0 == -1`, not `1`).
+Conditional truthiness is `!= 0`, as everywhere else.
 
 ### Builtins
 
@@ -661,6 +938,40 @@ file parses, so definition order doesn't matter).
 | `rnd(n)` | random integer in `[0, n)` |
 | `sleep(ms);` | pause `ms` milliseconds |
 | `exit();` | halt the program |
+
+### Strings and address-of
+
+```
+let name = "text\n";        ; string global: bytes, one per cell, + terminator
+```
+
+A string `let` declares a global whose "array" is the string itself: 1 byte
+per cell, followed by one `0` terminator cell, laid out like any other global
+(nothing is written until a function body runs). Escapes: `\n`, `\t`, `\r`,
+`\\`, `\"`, `\0`.
+
+`&name` / `&name[i]` take the **address** of a global (or of one of its
+cells), the same integer shape `sys`, `poke`, and arrays use. This is how
+byte buffers are handed to the syscall layer (comments here are `//`-to-EOL):
+
+```
+let path = "/tmp/demo.txt";
+let buf[128];
+
+fn main() {
+    let fd = sys(8, &path, 13, 0);          // file-open
+    let n = sys(9, fd, &buf, 40);           // file-read into buf
+    putn(fd); putc(32); putn(n); putc(10);
+    for (let i = 0; i < n; i = i + 1) {
+        putc(peek(&buf + i));
+    }
+    putc(10);
+    return 0;
+}
+```
+
+String globals and byte arrays follow the same bytes-in-cells convention as
+Quill's `data` — one byte per cell, one zero terminator cell per string.
 
 ### Memory model
 
@@ -704,9 +1015,11 @@ cleanly on the next condition check.
 - Arrays: one flat block, `base + i` addressing, length must be a literal,
   no initializers, no bounds checks at runtime.
 - `&&`/`||` eager; no `break`/`continue` (restructure with flags or returns);
-  no strings, no structs, no `~`, no `++`/`--`, no function pointers, no macros.
+  no structs, no `++`/`--`, no function pointers, no macros. Strings exist
+  only as `let`-style global byte arrays (see above), not as a built-in type.
 - Value builtins (`getc`, `peek`, `rnd`) work in expressions only; void
   builtins (`putc`, `putn`, `poke`, `sleep`, `exit`) work as statements only.
+- Comments are `//` to end of line; a stray `;` is not a comment.
 
 ---
 
@@ -761,6 +1074,47 @@ InkIDE myfile.txt
 ```
 
 Build is modular: `make` compiles `src/*.c` → `src/ink` (still a single binary).
+
+## Conformance tests and fuzzing
+
+`tests/` is a self-contained conformance suite pinning the semantics decisions
+a kernel inherits from this toolchain — one command:
+
+```sh
+make test          # from src/, or: tests/run.sh [/path/to/ink]
+```
+
+17 checks, exit code tells the story:
+
+| Test | Pins down |
+|---|---|
+| `01-wrap` | every previously-UB arithmetic case now defined & wrapping (add/sub/mul/neg/div/mod/pow/shifts/`not`) |
+| `02-pow-limit` | `pow` bills steps; a 2^63-power run faults with a step-limit error instead of hanging |
+| `03-rand` | `rand 1` is deterministic `0` |
+| `04-sysmem` | core `sys 18/19` semantics: fill, copy, overlapping (memmove) copies |
+| `05-data` | Quill `data`: string/int blocks, terminators, `push <name>` addresses |
+| `06-roundtrip` | run / `ink obj` + run / disassemble→assemble→run all byte-identical; `check` on objects; trailing-bytes rejection |
+| `07-scribe` | Scribe `~`, string globals, `&name` address-of |
+| `08-stack` | `--stack 16` trips a clean stack-limit fault |
+| `09-unknown-sys` | unknown/negative syscall numbers return `-1` and corrupt nothing |
+| `10-embed` | `FEFF`-embedded programs (with prose) run identically |
+| `11-sched` | a program under `ink sched` behaves byte-identically, as text and `.inkb` |
+| block-nesting pair | 800 static `if`s run; 1,100 fault with a clean "block nesting" error |
+
+Fuzz harnesses back the same guarantee from the other direction — the parser
+(`fuzz_parse.c`) and the full exec path (`fuzz_vm.c`) are fed arbitrary
+codepoint streams with the whole 32-bit space reachable, sandboxed to 200k
+steps / 2 MiB memory / 64k stack cells, under ASan+UBSan:
+
+```sh
+make fuzz CC=gcc CFLAGS="-std=c11 -g -O1 -fsanitize=address,undefined -DFUZZ_STANDALONE"
+./src/fuzz_parse corpus/*       # standalone drivers take files as seeds
+./src/fuzz_vm   corpus/*
+```
+
+(With clang, `-fsanitize=fuzzer,address` builds true libFuzzer binaries;
+`-DLIBFUZZER` switches the harness entry point.) Any bug found there is a
+kernel panic in waiting; both harnesses should always exit `ok`.
 
 ---
 

@@ -17,6 +17,8 @@ bool is_spec_cp(cp_t c) {
         case CP_SOCK_CREATE: case CP_SOCK_BIND: case CP_SOCK_LISTEN: case CP_SOCK_ACCEPT:
         case CP_SOCK_RECV: case CP_SOCK_SEND: case CP_SOCK_CLOSE:
         case CP_FILE_OPEN: case CP_FILE_READ: case CP_FILE_STAT: case CP_DIR_LIST:
+        case CP_FILE_CREATE: case CP_FILE_WRITE: case CP_FILE_APPEND:
+        case CP_SYS:
         case CP_ALM:
             return true;
         default:

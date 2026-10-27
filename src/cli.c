@@ -4,6 +4,9 @@
 #include "vm.h"
 #include "util.h"
 #include "quill.h"
+#include "sched.h"
+#include "obj.h"
+#include "progload.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +32,12 @@ static void disasm_block(Block *blk, int indent) {
     }
 }
 
+/* Historical parse-error shape, reproduced from parse.c's error record. */
+static void print_parse_error(const char *path) {
+    fprintf(stderr, "%s: parse error: %s (at codepoint %zu)\n",
+            path, g_parse_err, g_parse_pos);
+}
+
 void print_global_usage(const char *prog){
     fprintf(stderr,
         "ink %s - Invisible Ink\n"
@@ -43,7 +52,9 @@ void print_global_usage(const char *prog){
         "  dump         Dump parsed AST (internal disassembler, \"word N:\" style)\n"
         "  disassemble  Disassemble Invisible Ink to Quill (aliases: disasm, decompile)\n"
         "  assemble     Assemble Quill to Invisible Ink (aliases: asm, compile, build)\n"
+        "  obj          Compile to a binary Ink object (.inkb) (alias: object)\n"
         "  scc          Compile Scribe (*.s) to Quill (*.q) (alias: scribe)\n"
+        "  unscribe     Decompile scc-shaped Quill back to Scribe (aliases: uscribe, uns)\n"
         "  embed        Compile Quill and embed/thread into cover prose\n"
         "  edit         Launch InkIDE visual editor (alias: ide)\n"
         "  help         Show help for a command\n"
@@ -60,16 +71,18 @@ void print_global_usage(const char *prog){
 void print_help_run(const char *prog){
     fprintf(stderr,
         "Usage: %s run <file> [options]\n"
-        "  Run an Invisible Ink program.\n"
+        "  Run an Invisible Ink program (text, or compiled .inkb object).\n"
         "\n"
         "Arguments:\n"
         "  <file>                  UTF-8 file containing Invisible Ink (cover text allowed)\n"
+        "                          or an Ink object (.inkb) built by 'ink obj'\n"
         "\n"
         "Options:\n"
         "  --steps <N>             Override step limit (default %lu, 0 = unlimited)\n"
         "  --max-steps <N>         Same as --steps\n"
         "  --depth <N>             Override max call depth (default %d)\n"
         "  --max-depth <N>         Same as --depth\n"
+        "  --stack <N>             Data-stack limit in cells (0 = unlimited, default)\n"
         "  --stats                 Print execution stats to stderr after run\n"
         "  -h, --help              Show this help\n"
         "\n"
@@ -110,6 +123,27 @@ void print_help_assemble(const char *prog){
         "  -o, --output <file>     Write output to file (default: stdout)\n"
         "  -h, --help              Show this help\n",
         prog, prog, prog);
+}
+void print_help_obj(const char *prog){
+    fprintf(stderr,
+        "Usage: %s obj <input> [-o output.inkb]\n"
+        "\n"
+        "  Compile Quill (.q) or Invisible Ink text to a binary Ink object\n"
+        "  (.inkb): the loadable form for boot images. A .inkb is\n"
+        "  normalization-proof, loads with one read, and carries a version\n"
+        "  header — the form a kernel wants to load, never raw text.\n"
+        "\n"
+        "Arguments:\n"
+        "  <input>                 Quill source file or Invisible Ink text\n"
+        "\n"
+        "Options:\n"
+        "  -o, --output <file>     Write object to file (default: stdout)\n"
+        "  -h, --help              Show this help\n"
+        "\n"
+        "Examples:\n"
+        "  %s obj program.q -o program.inkb && %s run program.inkb\n"
+        "  %s disassemble program.inkb          # round-trip back to Quill\n",
+        prog, prog, prog, prog);
 }
 void print_help_edit(const char *prog){
     fprintf(stderr,
@@ -189,81 +223,135 @@ void print_help_scc(const char *prog){
         prog, prog, prog, prog);
 }
 
-int do_run(const char *path, bool do_stats){
-    g_src_name = path;
-    size_t raw_len; unsigned char *raw = read_file_raw(path, &raw_len);
-    if(!raw) return 1;
-    size_t full_len; cp_t *full = utf8_decode(raw, raw_len, &full_len);
-    free(raw);
-    size_t prog_len; bool embedded; cp_t *prog = extract_program(full, full_len, &prog_len, &embedded);
-    free(full);
-    g_words = split_and_parse_words(prog, prog_len, &g_word_count);
-    free(prog);
-    if (g_word_count == 0 || prog_len == 0) {
-        fprintf(stderr, "%s: this document does not contain Invisible Ink\n", path);
+void print_help_sched(const char *prog){
+    fprintf(stderr,
+        "Usage: %s sched [options] <file.txt> [file2.txt ...]\n"
+        "\n"
+        "  Run several Invisible Ink programs (text or .inkb objects) as processes\n"
+        "  of one VM core: round-robin op-quantum scheduler, blocking ops park\n"
+        "  the process (accept/recv wait on fd; sleep waits on its deadline)\n"
+        "  instead of blocking the machine. The same core that boots as the\n"
+        "  inkOS kernel.\n"
+        "\n"
+        "Options:\n"
+        "  --quantum <N>         Steps per scheduling turn (default 50000)\n"
+        "  --steps <N>           Absolute per-process step limit (0 = unlimited, default)\n"
+        "  --depth <N>           Per-process max call depth (default %d)\n"
+        "  --stack <N>           Per-process data-stack limit in cells (0 = unlimited)\n"
+        "  -h, --help            Show this help\n", prog, DEFAULT_MAX_DEPTH);
+}
+
+int do_run(const char *path, bool do_stats, unsigned long steps, int depth, unsigned long long stack){
+    InkProg prog;
+    if(!ink_prog_load_path(path,&prog)){
+        fprintf(stderr,"%s: %s\n",path,prog.err);
         return 1;
     }
-    g_outcome = OUT_NONE;
-    g_steps = 0;
-    g_sp = 0; g_mem_cap = 0; free(g_stack); g_stack=NULL; g_cap=0; free(g_mem); g_mem=NULL;
-    vm_reset_prng();
+    InkVM vm;
+    vm_init(&vm, &ink_host_posix);
+    vm.max_steps = steps;
+    vm.max_depth = depth;
+    vm.stack_limit = stack ? (size_t)stack : 0;
+    bool embedded = prog.embedded;
+    if(!ink_prog_into_vm(&prog,&vm)){
+        if(prog.kind==PROG_TEXT && g_parse_err[0]) print_parse_error(path);
+        else fprintf(stderr, "%s: %s\n", path, prog.err);
+        ink_prog_free(&prog);
+        vm_destroy(&vm);
+        return 1;
+    }
 
     struct timespec t0, t1;
     bool timed = do_stats && clock_gettime(CLOCK_MONOTONIC,&t0)==0;
+    Outcome o = vm_run(&vm);
+    fflush(stdout);
     int exit_code = 0;
-    if (setjmp(g_jmp) == 0) {
-        exec_block(g_words[0], 0);
-        fflush(stdout);
-        exit_code = 0;
+    if (o == OUT_HALT) {
+        exit_code = vm.exit_code ? (int)vm.exit_code : 0;
     } else {
-        fflush(stdout);
-        if (g_outcome == OUT_HALT) exit_code = 0;
-        else { fprintf(stderr, "%s: runtime error: %s\n", path, g_errmsg); exit_code = 1; }
+        fprintf(stderr, "%s: runtime error: %s\n", path, vm.errmsg);
+        exit_code = 1;
     }
     if(do_stats){
         if(timed) clock_gettime(CLOCK_MONOTONIC,&t1);
         double elapsed = timed ? (t1.tv_sec - t0.tv_sec)*1000.0 + (t1.tv_nsec - t0.tv_nsec)/1e6 : 0;
-        fprintf(stderr, "[ink] steps=%lu words=%zu stack=%zu mem=%zu%s  elapsed=%.2fms\n",
-            g_steps, g_word_count, g_sp, g_mem_cap, embedded? " embedded":"", elapsed);
+        fprintf(stderr, "[ink] steps=%lu words=%zu stack=%zu mem=%zu%s%s  elapsed=%.2fms\n",
+            vm.steps, vm.word_count, vm.sp, vm.mem_cap,
+            embedded? " embedded":"", prog.kind==PROG_OBJ?" obj":"", elapsed);
     }
-    for(size_t i=0;i<g_word_count;i++) block_free(g_words[i]);
-    free(g_words);
-    free(g_stack); g_stack=NULL; g_sp=g_cap=0;
-    free(g_mem); g_mem=NULL; g_mem_cap=0;
-    g_words=NULL; g_word_count=0;
+    ink_prog_free(&prog);
+    vm_destroy(&vm);
     return exit_code;
 }
 
 int do_dump(const char *path){
-    g_src_name = path;
-    size_t raw_len; unsigned char *raw = read_file_raw(path, &raw_len);
-    if(!raw) return 1;
-    size_t full_len; cp_t *full = utf8_decode(raw, raw_len, &full_len);
-    free(raw);
-    size_t prog_len; bool embedded; cp_t *prog = extract_program(full, full_len, &prog_len, &embedded);
-    free(full);
-    (void)embedded;
-    g_words = split_and_parse_words(prog, prog_len, &g_word_count);
-    free(prog);
-    if (g_word_count == 0 || prog_len == 0) {
-        fprintf(stderr, "%s: this document does not contain Invisible Ink\n", path);
+    InkProg prog;
+    if(!ink_prog_load_path(path,&prog)){
+        fprintf(stderr,"%s: %s\n",path,prog.err);
         return 1;
     }
-    for (size_t w = 0; w < g_word_count; w++) {
-        printf("word %zu:\n", w);
-        disasm_block(g_words[w], 2);
+    if (prog.kind == PROG_OBJ) {
+        for (size_t w = 0; w < prog.word_count; w++) {
+            printf("word %zu:\n", w);
+            disasm_block(prog.words[w], 2);
+        }
+        ink_prog_free(&prog);
+        return 0;
     }
-    for(size_t i=0;i<g_word_count;i++) block_free(g_words[i]);
-    free(g_words); g_words=NULL; g_word_count=0;
+    size_t wc = 0;
+    Block **words = split_and_parse_words(prog.cps, prog.cps_len, &wc);
+    if (wc == 0 || prog.cps_len == 0) {
+        fprintf(stderr, "%s: this document does not contain Invisible Ink\n", path);
+        free(words); ink_prog_free(&prog);
+        return 1;
+    }
+    if (!words || g_parse_err[0]) {
+        print_parse_error(path);
+        free(words);
+        ink_prog_free(&prog);
+        return 1;
+    }
+    for (size_t w = 0; w < wc; w++) {
+        printf("word %zu:\n", w);
+        disasm_block(words[w], 2);
+    }
+    for(size_t i=0;i<wc;i++) block_free(words[i]);
+    free(words);
+    ink_prog_free(&prog);
     return 0;
+}
+
+int do_sched(const char *const *paths, int npaths,
+             unsigned long quantum, unsigned long steps, int depth, unsigned long long stack){
+    if (npaths < 1) { fprintf(stderr, "sched: no input files\n"); return 2; }
+    if (quantum == 0) { fprintf(stderr, "sched: --quantum must be >= 1\n"); return 2; }
+    int rc = ink_sched_run(paths, npaths, quantum, steps, depth, stack);
+    fflush(stdout);
+    return rc;
 }
 
 int do_disassemble(const char *input, const char *output){
     size_t len; unsigned char *data = read_file_raw(input, &len);
     if(!data) return 1;
-    char *qsrc = q_disassemble_bytes(data,len);
-    free(data);
-    if(!qsrc){ fprintf(stderr, "error: %s\n", q_errmsg); return 1; }
+    char *qsrc = NULL;
+    if(inkobj_sniff(data,len)){
+        Block **words; size_t wc; ObjMemEntry *mem; size_t mc;
+        char err[256];
+        if(!inkobj_load(data,len,&words,&wc,&mem,&mc,err,sizeof(err))){
+            fprintf(stderr, "error: %s\n", err);
+            free(data);
+            return 1;
+        }
+        qsrc = q_disassemble_words(words, wc);
+        for(size_t i=0;i<wc;i++) block_free(words[i]);
+        free(words); free(mem);
+        if(!qsrc){ fprintf(stderr,"error: %s\n",q_errmsg); free(data); return 1; }
+        free(data);
+    } else {
+        qsrc = q_disassemble_bytes(data,len);
+        free(data);
+        if(!qsrc){ fprintf(stderr, "error: %s\n", q_errmsg); return 1; }
+    }
     if(output){
         FILE *f=fopen(output,"w"); if(!f){ fprintf(stderr,"error: %s: %s\n",output,strerror(errno)); free(qsrc); return 1; }
         fputs(qsrc,f); fclose(f);
@@ -272,6 +360,39 @@ int do_disassemble(const char *input, const char *output){
     }
     free(qsrc);
     return 0;
+}
+
+int do_unscribe(const char *input, const char *output){
+    size_t len; unsigned char *data = read_file_raw(input, &len);
+    if(!data) return 1;
+    char *src = malloc(len+1); memcpy(src,data,len); src[len]=0; free(data);
+    char *out = sdec_decompile(src, len);
+    free(src);
+    if(!out){ fprintf(stderr, "error: %s\n", q_errmsg); return 1; }
+    if(output){
+        FILE *f=fopen(output,"w"); if(!f){ fprintf(stderr,"error: %s: %s\n",output,strerror(errno)); free(out); return 1; }
+        fputs(out,f); fclose(f);
+    } else {
+        fputs(out,stdout);
+    }
+    free(out);
+    return 0;
+}
+
+void print_help_unscribe(const char *prog){
+    fprintf(stderr,
+        "Usage: %s unscribe <file.q> [-o output.s] [-h]\n"
+        "  Decompile Quill produced by `ink scc` back into Scribe source.\n"
+        "\n"
+        "Aliases: uscribe, uns\n"
+        "\n"
+        "Notes:\n"
+        "  - Only Quill emitted by `ink scc` is supported (frame prologue/epilogue\n"
+        "    patterns are required); handwritten Quill fails with an error.\n"
+        "  - Variable and function names are not recoverable: main() is `main`,\n"
+        "    parameters are a1..aN, locals _sN, globals gN.\n"
+        "  - Recompiling the output with `ink scc` yields an equivalent program.\n",
+        prog);
 }
 
 int do_assemble(const char *input, const char *output){
@@ -304,20 +425,87 @@ int do_assemble(const char *input, const char *output){
 }
 
 int do_check(const char *path){
-    g_src_name = path;
-    size_t raw_len; unsigned char *raw = read_file_raw(path, &raw_len);
-    if(!raw) return 1;
-    size_t full_len; cp_t *full = utf8_decode(raw, raw_len, &full_len);
-    free(raw);
-    size_t prog_len; bool embedded; cp_t *prog = extract_program(full, full_len, &prog_len, &embedded);
-    free(full);
-    if(prog_len==0){ fprintf(stderr,"%s: this document does not contain Invisible Ink\n",path); free(prog); return 1; }
-    size_t wc; Block **words = split_and_parse_words(prog, prog_len, &wc);
-    free(prog);
-    fprintf(stderr,"%s: OK — %zu word(s), %s, %zu spec codepoints\n", path, wc, embedded?"embedded":"plain", prog_len);
+    InkProg prog;
+    if(!ink_prog_load_path(path,&prog)){
+        fprintf(stderr,"%s: %s\n",path,prog.err);
+        return 1;
+    }
+    if(prog.kind==PROG_OBJ){
+        fprintf(stderr,"%s: OK — Ink object v1: %zu word(s), %zu memory-image cell(s)\n",
+                path, prog.word_count, prog.mem_count);
+        ink_prog_free(&prog);
+        return 0;
+    }
+    size_t wc = 0; Block **words = split_and_parse_words(prog.cps, prog.cps_len, &wc);
+    if (!words || wc == 0) {
+        print_parse_error(path);
+        free(words);
+        ink_prog_free(&prog);
+        return 1;
+    }
+    fprintf(stderr,"%s: OK — %zu word(s), %s, %zu spec codepoints\n", path, wc, prog.embedded?"embedded":"plain", prog.cps_len);
     for(size_t i=0;i<wc;i++) block_free(words[i]);
     free(words);
+    ink_prog_free(&prog);
     return 0;
+}
+
+/* ink obj <input> [-o out.inkb] — compile Quill (.q) or Invisible Ink text
+   into the binary .inkb object: one image to boot, no re-parse at load. */
+int do_obj(const char *input, const char *output){
+    if(!input){ fprintf(stderr,"obj: missing <input>\n"); return 2; }
+    size_t raw_len; unsigned char *raw = read_file_raw(input, &raw_len);
+    if(!raw) return 1;
+
+    Block **words = NULL;
+    size_t wc = 0;
+    char err[256];
+    if(inkobj_sniff(raw,raw_len)){
+        fprintf(stderr,"obj: %s: input is already an Ink object (run/check it directly)\n",input);
+        free(raw);
+        return 1;
+    }
+    size_t full_len; cp_t *full = utf8_decode(raw, raw_len, &full_len);
+    size_t prog_len; bool embedded;
+    cp_t *prog = extract_program(full, full_len, &prog_len, &embedded);
+    free(full);
+    if(prog_len==0){
+        /* no ink codepoints: treat the input as Quill mnemonic source (.q) */
+        char *src = malloc(raw_len+1);
+        memcpy(src, raw, raw_len);
+        src[raw_len]=0;
+        free(raw);
+        QCpVec qs;
+        if(!q_assemble(src, raw_len, &qs)){
+            fprintf(stderr,"error: %s\n", q_errmsg);
+            free(src);
+            return 1;
+        }
+        free(src);
+        words = split_and_parse_words(qs.data, qs.count, &wc);
+        q_cv_free(&qs);
+    } else {
+        free(raw);
+        words = split_and_parse_words(prog, prog_len, &wc);
+        free(prog);
+    }
+    if(!words || g_parse_err[0]){ print_parse_error(input); free(words); return 1; }
+    uint8_t *img; size_t img_len;
+    if(!inkobj_save((const Block *const *)words, wc, NULL, 0, &img, &img_len, err, sizeof(err))){
+        fprintf(stderr,"obj: %s: %s\n",input,err);
+        for(size_t i=0;i<wc;i++) block_free(words[i]);
+        free(words);
+        return 1;
+    }
+    int rc=0;
+    FILE *f=stdout;
+    if(output){ f=fopen(output,"wb"); if(!f){ fprintf(stderr,"error: %s: %s\n",output,strerror(errno)); free(img); rc=1; f=NULL; } }
+    if(f){ if(fwrite(img,1,img_len,f)!=img_len){ fprintf(stderr,"error writing %s\n",output?output:"stdout"); rc=1; } }
+    if(output && f) fclose(f);
+    free(img);
+    for(size_t i=0;i<wc;i++) block_free(words[i]);
+    free(words);
+    return rc;
 }
 
 int do_embed(const char *input, const char *output, const char *prose_file, const char *prose_text, bool wrap, long interval){

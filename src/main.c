@@ -27,6 +27,9 @@ int main(int argc, char **argv) {
             else if(strcmp(sub,"edit")==0||strcmp(sub,"ide")==0||strcmp(sub,"ed")==0) print_help_edit(prog);
             else if(strcmp(sub,"check")==0) print_help_check(prog);
             else if(strcmp(sub,"scc")==0||strcmp(sub,"scribe")==0) print_help_scc(prog);
+            else if(strcmp(sub,"sched")==0) print_help_sched(prog);
+            else if(strcmp(sub,"obj")==0||strcmp(sub,"object")==0) print_help_obj(prog);
+            else if(strcmp(sub,"unscribe")==0||strcmp(sub,"uscribe")==0||strcmp(sub,"uns")==0) print_help_unscribe(prog);
             else if(strcmp(sub,"version")==0) fprintf(stderr,"ink %s\n",INK_VERSION);
             else { fprintf(stderr,"unknown help topic '%s'\n", sub); print_global_usage(prog); return 2; }
             return 0;
@@ -43,19 +46,22 @@ int main(int argc, char **argv) {
         return do_dump(argv[2]);
     }
     
-    const char *known[] = {"run","r","check","dump","disassemble","disasm","decompile","d","assemble","asm","compile","build","c","scc","scribe","embed","em","edit","ide","ed","help","version",NULL};
+    const char *known[] = {"run","r","check","dump","disassemble","disasm","decompile","d","assemble","asm","compile","build","c","obj","object","scc","scribe","sched","unscribe","uscribe","uns","embed","em","edit","ide","ed","help","version",NULL};
     bool is_known=false;
     for(int i=0;known[i];i++) if(strcmp(argv[1],known[i])==0){ is_known=true; break; }
     if(!is_known){
         if(access(argv[1], F_OK)==0){
-            g_max_steps = DEFAULT_MAX_STEPS; g_max_depth = DEFAULT_MAX_DEPTH;
+            unsigned long steps = DEFAULT_MAX_STEPS;
+            int depth = DEFAULT_MAX_DEPTH;
+            unsigned long long stack = 0;
             bool stats=false;
             for(int i=2;i<argc;i++){
                 if(strcmp(argv[i],"--stats")==0) stats=true;
-                else if((strcmp(argv[i],"--steps")==0||strcmp(argv[i],"--max-steps")==0) && i+1<argc){ g_max_steps=strtoul(argv[++i],NULL,10); }
-                else if((strcmp(argv[i],"--depth")==0||strcmp(argv[i],"--max-depth")==0) && i+1<argc){ g_max_depth=atoi(argv[++i]); }
+                else if((strcmp(argv[i],"--steps")==0||strcmp(argv[i],"--max-steps")==0) && i+1<argc){ steps=strtoul(argv[++i],NULL,10); }
+                else if((strcmp(argv[i],"--depth")==0||strcmp(argv[i],"--max-depth")==0) && i+1<argc){ depth=atoi(argv[++i]); }
+                else if(strcmp(argv[i],"--stack")==0 && i+1<argc){ stack=strtoull(argv[++i],NULL,10); }
             }
-            return do_run(argv[1], stats);
+            return do_run(argv[1], stats, steps, depth, stack);
         } else {
             if(argv[1][0]=='-'){
                 fprintf(stderr, "unknown option '%s'\n", argv[1]);
@@ -73,23 +79,28 @@ int main(int argc, char **argv) {
     if(strcmp(cmd,"run")==0||strcmp(cmd,"r")==0){
         const char *file=NULL;
         bool stats=false;
-        g_max_steps = DEFAULT_MAX_STEPS; g_max_depth = DEFAULT_MAX_DEPTH;
+        unsigned long steps = DEFAULT_MAX_STEPS;
+        int depth = DEFAULT_MAX_DEPTH;
+        unsigned long long stack = 0;
         for(int i=2;i<argc;i++){
             if(strcmp(argv[i],"-h")==0||strcmp(argv[i],"--help")==0){ print_help_run(prog); return 0; }
             else if(strcmp(argv[i],"--stats")==0) stats=true;
             else if((strcmp(argv[i],"--steps")==0||strcmp(argv[i],"--max-steps")==0)){
                 if(i+1>=argc){ fprintf(stderr,"run: %s requires argument\n", argv[i]); return 2; }
-                g_max_steps=strtoul(argv[++i],NULL,10);
+                steps=strtoul(argv[++i],NULL,10);
             } else if((strcmp(argv[i],"--depth")==0||strcmp(argv[i],"--max-depth")==0)){
                 if(i+1>=argc){ fprintf(stderr,"run: %s requires argument\n", argv[i]); return 2; }
-                g_max_depth=atoi(argv[++i]);
+                depth=atoi(argv[++i]);
+            } else if(strcmp(argv[i],"--stack")==0){
+                if(i+1>=argc){ fprintf(stderr,"run: %s requires argument\n", argv[i]); return 2; }
+                stack=strtoull(argv[++i],NULL,10);
             } else if(argv[i][0]=='-' ){
                 fprintf(stderr,"run: unknown option '%s'\n", argv[i]); print_help_run(prog); return 2;
             } else if(!file) file=argv[i];
             else { fprintf(stderr,"run: unexpected argument '%s'\n", argv[i]); print_help_run(prog); return 2; }
         }
         if(!file){ fprintf(stderr,"run: missing <file>\n"); print_help_run(prog); return 2; }
-        return do_run(file, stats);
+        return do_run(file, stats, steps, depth, stack);
     }
 
     if(strcmp(cmd,"dump")==0){
@@ -119,6 +130,22 @@ int main(int argc, char **argv) {
         return do_disassemble(input, output);
     }
 
+    if(strcmp(cmd,"unscribe")==0||strcmp(cmd,"uscribe")==0||strcmp(cmd,"uns")==0){
+        const char *input=NULL; const char *output=NULL;
+        for(int i=2;i<argc;i++){
+            if(strcmp(argv[i],"-h")==0||strcmp(argv[i],"--help")==0){ print_help_unscribe(prog); return 0; }
+            else if(strcmp(argv[i],"-o")==0||strcmp(argv[i],"--output")==0){
+                if(i+1>=argc){ fprintf(stderr,"unscribe: %s requires argument\n", argv[i]); return 2; }
+                output=argv[++i];
+            } else if(argv[i][0]=='-' ){
+                fprintf(stderr,"unscribe: unknown option '%s'\n", argv[i]); return 2;
+            } else if(!input) input=argv[i];
+            else { fprintf(stderr,"unscribe: unexpected argument '%s'\n", argv[i]); return 2; }
+        }
+        if(!input){ fprintf(stderr,"unscribe: missing <file>\n"); print_help_unscribe(prog); return 2; }
+        return do_unscribe(input, output);
+    }
+
     if(strcmp(cmd,"assemble")==0||strcmp(cmd,"asm")==0||strcmp(cmd,"compile")==0||strcmp(cmd,"build")==0||strcmp(cmd,"c")==0){
         const char *input=NULL; const char *output=NULL;
         for(int i=2;i<argc;i++){
@@ -135,6 +162,23 @@ int main(int argc, char **argv) {
         return do_assemble(input, output);
     }
 
+    if(strcmp(cmd,"obj")==0||strcmp(cmd,"object")==0){
+        const char *input=NULL; const char *output=NULL;
+        for(int i=2;i<argc;i++){
+            if(strcmp(argv[i],"-h")==0||strcmp(argv[i],"--help")==0){ print_help_obj(prog); return 0; }
+            else if(strcmp(argv[i],"-o")==0||strcmp(argv[i],"--output")==0){
+                if(i+1>=argc){ fprintf(stderr,"obj: %s requires argument\n", argv[i]); return 2; }
+                output=argv[++i];
+            } else if(argv[i][0]=='-' ){
+                fprintf(stderr,"obj: unknown option '%s'\n", argv[i]); return 2;
+            } else if(!input) input=argv[i];
+            else if(!output) output=argv[i];
+            else { fprintf(stderr,"obj: unexpected argument '%s'\n", argv[i]); return 2; }
+        }
+        if(!input){ fprintf(stderr,"obj: missing <input>\n"); print_help_obj(prog); return 2; }
+        return do_obj(input, output);
+    }
+
     if(strcmp(cmd,"check")==0){
         const char *file=NULL;
         for(int i=2;i<argc;i++){
@@ -148,6 +192,37 @@ int main(int argc, char **argv) {
 
     if(strcmp(cmd,"scc")==0||strcmp(cmd,"scribe")==0){
         return scc_main(argc-1, argv+1);
+    }
+
+    if(strcmp(cmd,"sched")==0){
+        const char *files[4096];
+        int nfiles = 0;
+        unsigned long quantum = 50000, steps = 0;
+        unsigned long long stack = 0;
+        int depth = DEFAULT_MAX_DEPTH;
+        for(int i=2;i<argc;i++){
+            if(strcmp(argv[i],"-h")==0||strcmp(argv[i],"--help")==0){ print_help_sched(prog); return 0; }
+            else if(strcmp(argv[i],"--quantum")==0){
+                if(i+1>=argc){ fprintf(stderr,"sched: --quantum requires argument\n"); return 2; }
+                quantum=strtoul(argv[++i],NULL,10);
+            } else if(strcmp(argv[i],"--steps")==0){
+                if(i+1>=argc){ fprintf(stderr,"sched: --steps requires argument\n"); return 2; }
+                steps=strtoul(argv[++i],NULL,10);
+            } else if(strcmp(argv[i],"--depth")==0){
+                if(i+1>=argc){ fprintf(stderr,"sched: --depth requires argument\n"); return 2; }
+                depth=atoi(argv[++i]);
+            } else if(strcmp(argv[i],"--stack")==0){
+                if(i+1>=argc){ fprintf(stderr,"sched: --stack requires argument\n"); return 2; }
+                stack=strtoull(argv[++i],NULL,10);
+            } else if(argv[i][0]=='-'){
+                fprintf(stderr,"sched: unknown option '%s'\n", argv[i]); print_help_sched(prog); return 2;
+            } else {
+                if(nfiles>=4096){ fprintf(stderr,"sched: too many files\n"); return 2; }
+                files[nfiles++]=argv[i];
+            }
+        }
+        if(nfiles==0){ fprintf(stderr,"sched: missing input files\n"); print_help_sched(prog); return 2; }
+        return do_sched(files, nfiles, quantum, steps, depth, stack);
     }
 
     if(strcmp(cmd,"embed")==0||strcmp(cmd,"em")==0){
@@ -194,6 +269,7 @@ int main(int argc, char **argv) {
             else if(strcmp(sub,"edit")==0||strcmp(sub,"ide")==0) print_help_edit(prog);
             else if(strcmp(sub,"check")==0) print_help_check(prog);
             else if(strcmp(sub,"scc")==0||strcmp(sub,"scribe")==0) print_help_scc(prog);
+            else if(strcmp(sub,"unscribe")==0||strcmp(sub,"uscribe")==0||strcmp(sub,"uns")==0) print_help_unscribe(prog);
             else { fprintf(stderr,"unknown help topic '%s'\n", sub); return 2; }
             return 0;
         }

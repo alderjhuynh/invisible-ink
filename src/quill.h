@@ -15,5 +15,10 @@ void q_cv_free(QCpVec *v);
 
 bool q_assemble(const char *source, size_t src_len, QCpVec *out_prog);
 char *q_disassemble_bytes(const unsigned char *data, size_t data_len);
+/* Disassemble already-parsed word lists (used for .inkb objects). */
+char *q_disassemble_words(Block **blocks, size_t word_count);
+
+/* decompile scc-shaped Quill to Scribe (NULL + q_errmsg on failure) */
+char *sdec_decompile(const char *source, size_t src_len);
 
 #endif
